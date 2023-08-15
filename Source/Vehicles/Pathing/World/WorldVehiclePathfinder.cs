@@ -16,8 +16,7 @@ namespace Vehicles
 	public class WorldVehiclePathfinder : WorldComponent
 	{
 		private const int SearchLimit = 500000;
-
-		private static float bestRoadDiscount = DefDatabase<RoadDef>.AllDefs.Min(road => road.movementCostMultiplier);
+		private const int HeuristicTickCost = 1200;
 
 		private readonly FastPriorityQueue<CostNode> openList = new FastPriorityQueue<CostNode>(new CostNodeComparer());
 		private readonly PathFinderNodeFast[] calcGrid;
@@ -80,7 +79,7 @@ namespace Vehicles
 			float cost = tileCache[tileFeatureLookup.IndexFor(tile)];
 			if (cost <= 0)
 			{
-				cost = vehicleDefs.NullOrEmpty() ? -1 : vehicleDefs.Max(vehicleDef => WorldVehiclePathGrid.Instance.movementDifficulty[vehicleDef][tile]);
+				cost = vehicleDefs.NullOrEmpty() ? -1 : vehicleDefs.Max(vehicleDef => WorldVehiclePathGrid.Instance.movementDifficulty[vehicleDef.DefIndex][tile]);
 				tileCache[tileFeatureLookup.IndexFor(tile)] = cost;
 			}
 			return cost;
@@ -93,9 +92,9 @@ namespace Vehicles
 		/// <param name="destTile"></param>
 		/// <param name="caravan"></param>
 		/// <param name="terminator"></param>
-		public WorldPath FindPath(int startTile, int destTile, VehicleCaravan caravan, Func<float, bool> terminator = null, List<string> explanations = null)
+		public WorldPath FindPath(int startTile, int destTile, VehicleCaravan caravan, Func<float, bool> terminator = null)
 		{
-			return FindPath(startTile, destTile, caravan.AllVehicles(), terminator, explanations);
+			return FindPath(startTile, destTile, caravan.AllVehicles(), caravan.TicksPerMove, terminator);
 		}
 
 		/// <summary>
@@ -106,9 +105,9 @@ namespace Vehicles
 		/// <param name="vehicles"></param>
 		/// <param name="terminator"></param>
 		/// <param name="explanations"></param>
-		public WorldPath FindPath(int startTile, int destTile, List<VehiclePawn> vehicles, Func<float, bool> terminator = null, List<string> explanations = null)
+		public WorldPath FindPath(int startTile, int destTile, List<VehiclePawn> vehicles, int ticksPerMove = VehicleCaravanTicksPerMoveUtility.DefaultTicksPerMove, Func<float, bool> terminator = null)
 		{
-			return FindPath(startTile, destTile, vehicles.UniqueVehicleDefsInList(), terminator, explanations);
+			return FindPath(startTile, destTile, vehicles.UniqueVehicleDefsInList(), ticksPerMove, terminator);
 		}
 
 		/// <summary>
@@ -118,19 +117,17 @@ namespace Vehicles
 		/// <param name="destTile"></param>
 		/// <param name="vehicleDefs"></param>
 		/// <param name="terminator"></param>
-		public WorldPath FindPath(int startTile, int destTile, List<VehicleDef> vehicleDefs, Func<float, bool> terminator = null, List<string> explanations = null)
+		public WorldPath FindPath(int startTile, int destTile, List<VehicleDef> vehicleDefs, int ticksPerMove = VehicleCaravanTicksPerMoveUtility.DefaultTicksPerMove, Func<float, bool> terminator = null)
 		{
+			if (vehicleDefs.NullOrEmpty())
+			{
+				Log.Error($"Attempting to find path with no vehicles.");
+				return WorldPath.NotFound;
+			}
 			ClearTileCache();
 			try
 			{
 				string vehiclesPathing = string.Join(",", vehicleDefs.Select(v => v.defName));
-				StringBuilder explanation = null;
-				if (explanations != null)
-				{
-					explanation = new StringBuilder();
-				}
-				explanation?.Clear();
-				explanation?.Append($"Finding path for {vehiclesPathing}");
 				if (startTile < 0)
 				{
 					Log.Error($"Tried to FindPath with invalid startTile={startTile} vehicles={vehiclesPathing}");
@@ -143,18 +140,17 @@ namespace Vehicles
 				}
 				if (!vehicleDefs.All(vehicleDef => WorldVehicleReachability.Instance.CanReach(vehicleDef, startTile, destTile)))
 				{
-					explanation?.AppendLine($"Not all vehicles in {vehiclesPathing} can reach {destTile} from {startTile}");
 					return WorldPath.NotFound;
 				}
 
 				World world = Find.World;
 				WorldGrid grid = world.grid;
-				bool canTravelCoast = vehicleDefs.All(v => v.properties.customBiomeCosts.TryGetValue(BiomeDefOf.Ocean, out _));
+				bool coastalTravel = vehicleDefs.All(v => v.properties.customBiomeCosts.ContainsKey(BiomeDefOf.Ocean));
 				List<int> tileIDToNeighbors_offsets = grid.tileIDToNeighbors_offsets;
 				List<int> tileIDToNeighbors_values = grid.tileIDToNeighbors_values;
 				Vector3 normalized = grid.GetTileCenter(destTile).normalized;
+				float bestRoadDiscount = DefDatabase<RoadDef>.AllDefsListForReading.Min(road => VehicleCaravan_PathFollower.GetRoadMovementDifficultyMultiplier(vehicleDefs, road));
 				int tilesSearched = 0;
-				int ticksPerMove = 3300;// caravan.TicksPerMove;
 				int heuristicStrength = CalculateHeuristicStrength(startTile, destTile);
 				statusOpenValue += 2;
 				statusClosedValue += 2;
@@ -171,8 +167,6 @@ namespace Vehicles
 				openList.Push(new CostNode(startTile, 0));
 				while (openList.Count > 0)
 				{
-					explanations?.Add(explanation.ToString());
-					explanation?.Clear();
 					CostNode costNode = openList.Pop();
 					if (costNode.cost == calcGrid[costNode.tile].costNodeCost)
 					{
@@ -181,8 +175,7 @@ namespace Vehicles
 						{
 							if (tile == destTile)
 							{
-								explanation?.AppendLine($"Destination reached. Vehicles=({vehiclesPathing})");
-								return FinalizedPath(tile, vehicleDefs);
+								return FinalizedPath(tile);
 							}
 							if (tilesSearched > SearchLimit)
 							{
@@ -196,40 +189,46 @@ namespace Vehicles
 								if (calcGrid[neighbor].status != statusClosedValue)
 								{
 									bool allPassable = vehicleDefs.All(vehicleDef => WorldVehiclePathGrid.Instance.Passable(neighbor, vehicleDef));
-									explanation?.AppendLine($"tile={neighbor} is allPassable={allPassable}");
-									if (allPassable)
+									if (allPassable /*|| (coastalTravel && (neighbor == startTile || neighbor == destTile))*/)
 									{
 										float highestTerrainCost = TileTypeCost(neighbor, vehicleDefs);
-										if (canTravelCoast)
+										if (coastalTravel)
 										{
 											if (tile != startTile && neighbor != destTile)
 											{
 												highestTerrainCost = vehicleDefs.Max(vehicleDef => WorldVehiclePathGrid.ConsistentDirectionCost(tile, neighbor, vehicleDef));
 											}
 										}
-										int totalPathCost = (int)(ticksPerMove * highestTerrainCost * VehicleCaravan_PathFollower.GetRoadMovementDifficultyMultiplier(vehicleDefs, tile, neighbor, null)) + calcGrid[tile].knownCost;
+										float roadMultiplier = VehicleCaravan_PathFollower.GetRoadMovementDifficultyMultiplier(vehicleDefs, tile, neighbor);
+										int totalPathCost = (int)(ticksPerMove * highestTerrainCost * roadMultiplier) + calcGrid[tile].knownCost;
 										ushort status = calcGrid[neighbor].status;
 										bool diffStatusValues = status != statusClosedValue && status != statusOpenValue;
-										explanation?.AppendLine($"Tile={neighbor} highestTerrainCost={highestTerrainCost} totalPathCost={totalPathCost} status={diffStatusValues}");
 										if (diffStatusValues || calcGrid[neighbor].knownCost > totalPathCost)
 										{
 											Vector3 tileCenter = grid.GetTileCenter(neighbor);
-											if (status != statusClosedValue && status != statusOpenValue)
+											if (diffStatusValues)
 											{
 												float tileDistance = grid.ApproxDistanceInTiles(GenMath.SphericalDistance(tileCenter.normalized, normalized));
 												calcGrid[neighbor].heuristicCost = Mathf.RoundToInt(ticksPerMove * tileDistance * heuristicStrength * bestRoadDiscount);
 											}
-											int totalHeuristicCost = totalPathCost + calcGrid[neighbor].heuristicCost;
-											explanation?.AppendLine($"CostWithHeuristic={totalHeuristicCost}");
+											int costNodeCost = totalPathCost + calcGrid[neighbor].heuristicCost;
 											calcGrid[neighbor].parentTile = tile;
 											calcGrid[neighbor].knownCost = totalPathCost;
 											calcGrid[neighbor].status = statusOpenValue;
-											calcGrid[neighbor].costNodeCost = totalHeuristicCost;
-											if (VehicleMod.settings.debug.debugDrawVehiclePathCosts)
+											calcGrid[neighbor].costNodeCost = costNodeCost;
+											if (DebugHelper.World.VehicleDef != null)
 											{
-												Find.World.debugDrawer.FlashTile(neighbor, 0, totalPathCost.ToString(), 1);
+												if (DebugHelper.World.DebugType == WorldPathingDebugType.PathCosts)
+												{
+													Find.World.debugDrawer.FlashTile(neighbor, colorPct: calcGrid[neighbor].knownCost / 150f,
+														text: $"t:{ticksPerMove} h:{calcGrid[neighbor].heuristicCost}");
+												}
+												else if (DebugHelper.World.DebugType == WorldPathingDebugType.Reachability)
+												{
+													Find.World.debugDrawer.FlashTile(neighbor, colorPct: 0.55f);
+												}
 											}
-											openList.Push(new CostNode(neighbor, totalHeuristicCost));
+											openList.Push(new CostNode(neighbor, costNodeCost));
 										}
 									}
 								}
@@ -238,7 +237,6 @@ namespace Vehicles
 							calcGrid[tile].status = statusClosedValue;
 							if (terminator != null && terminator(calcGrid[tile].costNodeCost))
 							{
-								explanation?.AppendLine($"Terminator has been hit. Vehicles=({vehiclesPathing})");
 								return WorldPath.NotFound;
 							}
 						}
@@ -257,7 +255,7 @@ namespace Vehicles
 		/// Finalize path from <paramref name="lastTile"/>
 		/// </summary>
 		/// <param name="lastTile"></param>
-		private WorldPath FinalizedPath(int lastTile, List<VehicleDef> vehicleDefs)
+		private WorldPath FinalizedPath(int lastTile)
 		{
 			WorldPath emptyWorldPath = Find.WorldPathPool.GetEmptyWorldPath();
 			int num = lastTile;
@@ -365,9 +363,9 @@ namespace Vehicles
 
 			public void RegisterAllFeatureTypes()
 			{
-				biomeDefs.AddRange(DefDatabase<BiomeDef>.AllDefs);
-				roadDefs.AddRange(DefDatabase<RoadDef>.AllDefs);
-				riverDefs.AddRange(DefDatabase<RiverDef>.AllDefs);
+				biomeDefs.AddRange(DefDatabase<BiomeDef>.AllDefsListForReading);
+				roadDefs.AddRange(DefDatabase<RoadDef>.AllDefsListForReading);
+				riverDefs.AddRange(DefDatabase<RiverDef>.AllDefsListForReading);
 				hills.AddRange(Enum.GetValues(typeof(Hilliness)).Cast<Hilliness>());
 			}
 

@@ -101,8 +101,8 @@ namespace Vehicles
 			BottomButtons(bottomRect);
 			Rect inRect2 = bottomRect;
 			inRect2.yMax -= 76f;
-			itemsTransfer.OnGUI(inRect2, out bool flag);
-			if (flag)
+			itemsTransfer.OnGUI(inRect2, out bool anythingChanged);
+			if (anythingChanged)
 			{
 				CountToTransferChanged();
 			}
@@ -144,7 +144,7 @@ namespace Vehicles
 						{
 							transferred = delegate(Thing thing, IThingHolder originalHolder)
 							{
-								vehicle.inventory.innerContainer.TryAdd(thing, true);
+								vehicle.AddOrTransfer(thing);
 							};
 						}
 						TransferableUtility.Transfer(things, countToTransfer, transferred);
@@ -176,7 +176,7 @@ namespace Vehicles
 			}
 			var color = GUI.color;
 			GUI.color = textColor;
-			string massText = string.Format("Mass: {0}/{1}", MassUsage, MassCapacity);
+			string massText = $"{"Mass".Translate()}: {MassUsage}/{MassCapacity}";
 			Widgets.Label(rect, massText);
 			GUI.color = color;
 		}
@@ -205,7 +205,8 @@ namespace Vehicles
 		{
 			transferables = new List<TransferableOneWay>();
 			AddItemsToTransferables();
-			itemsTransfer = new TransferableOneWayWidget(transferables, null, null, null, true, IgnorePawnsInventoryMode.IgnoreIfAssignedToUnloadOrPlayerPawn);
+			itemsTransfer = new TransferableOneWayWidget(transferables, null, null, null, true, ignorePawnInventoryMass: IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload, 
+				includePawnsMassInMassUsage: false, availableMassGetter: () => MassCapacity - MassUsage);
 			CountToTransferChanged();
 		}
 

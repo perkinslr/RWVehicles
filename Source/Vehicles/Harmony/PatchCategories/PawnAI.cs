@@ -6,6 +6,7 @@ using Verse.AI;
 using RimWorld;
 using RimWorld.Planet;
 using HarmonyLib;
+using SmashTools;
 
 namespace Vehicles
 {
@@ -26,7 +27,7 @@ namespace Vehicles
 				{
 					if (handler.RequiredForMovement)
 					{
-						Messages.Message(TranslatorFormattedStringExtensions.Translate("Vehicles_VehicleCaravanMentalBreakMovementRole", ___pawn),MessageTypeDefOf.NegativeEvent);
+						Messages.Message(TranslatorFormattedStringExtensions.Translate("VF_VehicleCaravanMentalBreakMovementRole", ___pawn),MessageTypeDefOf.NegativeEvent);
 					}
 				}
 				else

@@ -15,9 +15,6 @@ namespace Vehicles
 	{
 		static VehicleHarmonyOnMod()
 		{
-			ParsingHelper.RegisterParsers();
-			ParsingHelper.RegisterAttributes();
-
 			var harmony = new Harmony($"{VehicleHarmony.VehiclesUniqueId}_preload");
 
 			harmony.Patch(original: AccessTools.Property(type: typeof(RaceProperties), name: nameof(RaceProperties.IsFlesh)).GetGetMethod(),
@@ -30,11 +27,11 @@ namespace Vehicles
 				prefix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
 				nameof(ShaderFromAssetBundle)));
 			harmony.Patch(original: AccessTools.Method(typeof(DefGenerator), nameof(DefGenerator.GenerateImpliedDefs_PreResolve)),
-				postfix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
+				prefix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
 				nameof(ImpliedDefGeneratorVehicles)));
 			harmony.Patch(original: AccessTools.Method(typeof(GraphicData), "Init"),
-				prefix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
-				nameof(GraphicPreInit)));
+				postfix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
+				nameof(GraphicInit)));
 			/* Debugging Only */
 			//harmony.Patch(original: AccessTools.Method(typeof(DirectXmlToObject), "GetFieldInfoForType"),
 			//	prefix: new HarmonyMethod(typeof(VehicleHarmonyOnMod),
@@ -87,7 +84,7 @@ namespace Vehicles
 		/// <param name="___shaderInt"></param>
 		public static void ShaderFromAssetBundle(ShaderTypeDef __instance, ref Shader ___shaderInt)
 		{
-			if (__instance is RGBShaderTypeDef)
+			if (__instance is RGBShaderTypeDef && VehicleMod.settings.debug.debugLoadAssetBundles)
 			{
 				___shaderInt = AssetBundleDatabase.LoadAsset<Shader>(__instance.shaderPath);
 				if (___shaderInt is null)
@@ -102,7 +99,7 @@ namespace Vehicles
 		/// </summary>
 		public static void ImpliedDefGeneratorVehicles()
 		{
-			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefs)
+			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefsListForReading)
 			{
 				if (PawnKindDefGenerator_Vehicles.GenerateImpliedPawnKindDef(vehicleDef, out PawnKindDef kindDef))
 				{
@@ -124,6 +121,10 @@ namespace Vehicles
 						DefGenerator.AddImpliedDef(skyfallerCrashing);
 					}
 				}
+				if (ThingDefGenerator_Buildables.GenerateImpliedBuildDef(vehicleDef, out VehicleBuildDef buildDef))
+				{
+					DefGenerator.AddImpliedDef(buildDef);
+				}
 			}
 		}
 
@@ -131,18 +132,12 @@ namespace Vehicles
 		/// Redirect Init calls from GraphicData to GraphicDataRGB
 		/// </summary>
 		/// <param name="__instance"></param>
-		public static bool GraphicPreInit(GraphicData __instance)
+		public static void GraphicInit(GraphicData __instance)
 		{
 			if (__instance is GraphicDataLayered graphicDataLayered)
 			{
-				graphicDataLayered.PreInit();
+				graphicDataLayered.Init();
 			}
-			if (__instance is GraphicDataRGB graphicDataRGB)
-			{
-				graphicDataRGB.Init();
-				return false;
-			}
-			return true;
 		}
 	}
 }

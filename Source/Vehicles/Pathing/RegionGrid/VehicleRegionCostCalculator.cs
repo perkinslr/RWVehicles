@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Verse;
+using UnityEngine;
 using SmashTools;
 
 namespace Vehicles
@@ -12,6 +13,8 @@ namespace Vehicles
 	public class VehicleRegionCostCalculator
 	{
 		private const int SampleCount = 11;
+		private static readonly int DefaultTicksPerMoveCardinal = Mathf.RoundToInt(60 / 4.5f);
+		private static readonly int DefaultTicksPerMoveDiagonal = Mathf.RoundToInt(DefaultTicksPerMoveCardinal * Ext_Math.Sqrt2);
 
 		private static int[] pathCostSamples = new int[SampleCount];
 
@@ -19,7 +22,7 @@ namespace Vehicles
 		private static readonly List<int> tmpPathableNeighborIndices = new List<int>();
 		private static readonly Dictionary<int, float> tmpDistances = new Dictionary<int, float>();
 
-		private readonly Map map;
+		private readonly VehicleMapping mapping;
 		private readonly VehicleDef vehicleDef;
 
 		private VehicleRegion[] regionGrid;
@@ -43,9 +46,9 @@ namespace Vehicles
 
 		private readonly List<Pair<VehicleRegionLink, int>> preciseRegionLinkDistances = new List<Pair<VehicleRegionLink, int>>();
 
-		public VehicleRegionCostCalculator(Map map, VehicleDef vehicleDef)
+		public VehicleRegionCostCalculator(VehicleMapping mapping, VehicleDef vehicleDef)
 		{
-			this.map = map;
+			this.mapping = mapping;
 			this.vehicleDef = vehicleDef;
 			preciseRegionLinkDistancesDistanceGetter = new Func<int, int, float>(PreciseRegionLinkDistancesDistanceGetter);
 		}
@@ -62,7 +65,7 @@ namespace Vehicles
 		/// <param name="drafted"></param>
 		public void Init(CellRect destination, HashSet<VehicleRegion> destRegions, TraverseParms parms, int moveTicksCardinal, int moveTicksDiagonal, ByteGrid avoidGrid, bool drafted)
 		{
-			regionGrid = map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionGrid.DirectGrid;
+			regionGrid = mapping[vehicleDef].VehicleRegionGrid.DirectGrid;
 			traverseParms = parms;
 			destinationCell = destination.CenterCell;
 			this.moveTicksCardinal = moveTicksCardinal;
@@ -144,7 +147,7 @@ namespace Vehicles
 						{
 							num2 = VehiclePathFinder.GetBuildingCost(otherRegion.door, traverseParms, traverseParms.pawn);
 							if (num2 == int.MaxValue) continue;
-							num2 += OctileDistance(1, 0);
+							num2 += OctileDistance(1, 0, moveTicksCardinal, moveTicksDiagonal);
 						}
 						int minPathCost = RegionMedianPathCost(otherRegion);
 						foreach(VehicleRegionLink regionLink in otherRegion.links)
@@ -221,7 +224,7 @@ namespace Vehicles
 			{
 				return result;
 			}
-			CellIndices cellIndices = map.cellIndices;
+			CellIndices cellIndices = mapping.map.cellIndices;
 			Rand.PushState();
 			Rand.Seed = cellIndices.CellToIndex(region.extentsClose.CenterCell) * (region.links.Count + 1);
 			for(int i = 0; i < SampleCount; i++)
@@ -241,12 +244,12 @@ namespace Vehicles
 		/// <param name="index"></param>
 		private int GetCellCostFast(int index)
 		{
-			int num = map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehiclePathGrid.pathGrid[index];
+			int num = mapping[vehicleDef].VehiclePathGrid.pathGrid[index];
 			if (avoidGrid != null)
 			{
 				num += avoidGrid[index] * 8;
 			}
-			num += drafted ? map.terrainGrid.topGrid[index].extraDraftedPerceivedPathCost : map.terrainGrid.topGrid[index].extraNonDraftedPerceivedPathCost;
+			num += drafted ? mapping.map.terrainGrid.topGrid[index].extraDraftedPerceivedPathCost : mapping.map.terrainGrid.topGrid[index].extraNonDraftedPerceivedPathCost;
 			return num;
 		}
 
@@ -263,7 +266,7 @@ namespace Vehicles
 			IntVec3 intVec = a2 - b2;
 			int num = Math.Abs(intVec.x);
 			int num2 = Math.Abs(intVec.z);
-			return OctileDistance(num, num2) + (minPathCost * Math.Max(num, num2)) + (minPathCost * Math.Min(num, num2));
+			return OctileDistance(num, num2, moveTicksCardinal, moveTicksDiagonal) + (minPathCost * Math.Max(num, num2)) + (minPathCost * Math.Min(num, num2));
 		}
 
 		/// <summary>
@@ -278,7 +281,7 @@ namespace Vehicles
 			IntVec3 intVec = cell - linkTargetCell;
 			int num = Math.Abs(intVec.x);
 			int num2 = Math.Abs(intVec.z);
-			return OctileDistance(num, num2) + (minPathCost * Math.Max(num, num2)) + (minPathCost * Math.Min(num, num2));
+			return OctileDistance(num, num2, moveTicksCardinal, moveTicksDiagonal) + (minPathCost * Math.Max(num, num2)) + (minPathCost * Math.Min(num, num2));
 		}
 
 		/// <summary>
@@ -303,9 +306,9 @@ namespace Vehicles
 		/// Center of region link <paramref name="link"/>
 		/// </summary>
 		/// <param name="link"></param>
-		private static IntVec3 RegionLinkCenter(VehicleRegionLink link)
+		public static IntVec3 RegionLinkCenter(VehicleRegionLink link)
 		{
-			return new IntVec3(SpanCenterX(link.span), 0, SpanCenterZ(link.span));
+			return new IntVec3(SpanCenterX(link.Span), 0, SpanCenterZ(link.Span));
 		}
 
 		/// <summary>
@@ -316,7 +319,7 @@ namespace Vehicles
 		private int MinimumRegionLinkDistance(IntVec3 cell, VehicleRegionLink link)
 		{
 			IntVec3 intVec = cell - LinkClosestCell(cell, link);
-			return OctileDistance(Math.Abs(intVec.x), Math.Abs(intVec.z));
+			return OctileDistance(Math.Abs(intVec.x), Math.Abs(intVec.z), moveTicksCardinal, moveTicksDiagonal);
 		}
 
 		/// <summary>
@@ -324,8 +327,16 @@ namespace Vehicles
 		/// </summary>
 		/// <param name="dx"></param>
 		/// <param name="dz"></param>
-		private int OctileDistance(int dx, int dz)
+		internal static int OctileDistance(int dx, int dz, int moveTicksCardinal = -1, int moveTicksDiagonal = -1)
 		{
+			if (moveTicksCardinal < 0)
+			{
+				moveTicksCardinal = DefaultTicksPerMoveCardinal;
+			}
+			if (moveTicksDiagonal < 0)
+			{
+				moveTicksDiagonal = DefaultTicksPerMoveDiagonal;
+			}
 			return GenMath.OctileDistance(dx, dz, moveTicksCardinal, moveTicksDiagonal);
 		}
 
@@ -334,7 +345,7 @@ namespace Vehicles
 		/// </summary>
 		/// <param name="cell"></param>
 		/// <param name="link"></param>
-		private IntVec3 GetLinkTargetCell(IntVec3 cell, VehicleRegionLink link)
+		private static IntVec3 GetLinkTargetCell(IntVec3 cell, VehicleRegionLink link)
 		{
 			return LinkClosestCell(cell, link);
 		}
@@ -346,7 +357,7 @@ namespace Vehicles
 		/// <param name="link"></param>
 		private static IntVec3 LinkClosestCell(IntVec3 cell, VehicleRegionLink link)
 		{
-			EdgeSpan span = link.span;
+			EdgeSpan span = link.Span;
 			int num = 0;
 			int num2 = 0;
 			if (span.dir == SpanDirection.North)
@@ -374,15 +385,15 @@ namespace Vehicles
 			tmpCellIndices.Clear();
 			if(destination.Width == 1 && destination.Height == 1)
 			{
-				tmpCellIndices.Add(map.cellIndices.CellToIndex(destination.CenterCell));
+				tmpCellIndices.Add(mapping.map.cellIndices.CellToIndex(destination.CenterCell));
 			}
 			else
 			{
 				foreach (IntVec3 cell in destination)
 				{
-					if (cell.InBounds(map))
+					if (cell.InBounds(mapping.map))
 					{
-						tmpCellIndices.Add(map.cellIndices.CellToIndex(cell));
+						tmpCellIndices.Add(mapping.map.cellIndices.CellToIndex(cell));
 					}
 				}
 			}
@@ -391,7 +402,7 @@ namespace Vehicles
 			{
 				if (regionLink.GetOtherRegion(region).Allows(traverseParms, false))
 				{
-					if(!tmpDistances.TryGetValue(map.cellIndices.CellToIndex(linkTargetCells[regionLink]), out float num))
+					if(!tmpDistances.TryGetValue(mapping.map.cellIndices.CellToIndex(linkTargetCells[regionLink]), out float num))
 					{
 						Log.ErrorOnce("Dijkstra couldn't reach one of the cells even though they are in the same region. There is most likely something wrong with the " +
 							"neighbor nodes getter.", vehicleDef.GetHashCode() ^ "VehiclesDijkstraRegionLinkDistanceCalculator".GetHashCode());
@@ -431,7 +442,7 @@ namespace Vehicles
 		/// <param name="b"></param>
 		private bool AreCellsDiagonal(int a, int b)
 		{
-			int x = map.Size.x;
+			int x = mapping.map.Size.x;
 			return a % x != b % x && a / x != b / x;
 		}
 
@@ -442,12 +453,12 @@ namespace Vehicles
 		private List<int> PathableNeighborIndices(int index)
 		{
 			tmpPathableNeighborIndices.Clear();
-			VehiclePathGrid pathGrid = map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehiclePathGrid;
-			int x = map.Size.x;
+			VehiclePathGrid pathGrid = mapping[vehicleDef].VehiclePathGrid;
+			int x = mapping.map.Size.x;
 			bool flag = index % x > 0;
 			bool flag2 = index % x < x - 1;
 			bool flag3 = index >= x;
-			bool flag4 = index / x < map.Size.z - 1;
+			bool flag4 = index / x < mapping.map.Size.z - 1;
 			if(flag3 && pathGrid.WalkableFast(index - x))
 			{
 				tmpPathableNeighborIndices.Add(index - x);
@@ -464,9 +475,9 @@ namespace Vehicles
 			{
 				tmpPathableNeighborIndices.Add(index + x);
 			}
-			bool flag5 = !flag || VehiclePathFinder.BlocksDiagonalMovement(map, vehicleDef, index - 1);
-			bool flag6 = !flag2 || VehiclePathFinder.BlocksDiagonalMovement(map, vehicleDef, index + 1);
-			if(flag3 && !VehiclePathFinder.BlocksDiagonalMovement(map, vehicleDef, index - x))
+			bool flag5 = !flag || VehiclePathFinder.BlocksDiagonalMovement(mapping.map, vehicleDef, index - 1);
+			bool flag6 = !flag2 || VehiclePathFinder.BlocksDiagonalMovement(mapping.map, vehicleDef, index + 1);
+			if(flag3 && !VehiclePathFinder.BlocksDiagonalMovement(mapping.map, vehicleDef, index - x))
 			{
 				if(!flag6 && pathGrid.WalkableFast(index - x + 1))
 				{
@@ -477,7 +488,7 @@ namespace Vehicles
 					tmpPathableNeighborIndices.Add(index - x - 1);
 				}
 			}
-			if(flag4 && !VehiclePathFinder.BlocksDiagonalMovement(map, vehicleDef, index + x))
+			if(flag4 && !VehiclePathFinder.BlocksDiagonalMovement(mapping.map, vehicleDef, index + x))
 			{
 				if(!flag6 && pathGrid.WalkableFast(index + x + 1))
 				{

@@ -30,7 +30,7 @@ namespace Vehicles
 
 		//folderName : <filePath, texture/mat array>
 		public Texture2D[] masks;
-		public Dictionary<PatternDef, Pair<string, Material[]>> maskMatPatterns = new Dictionary<PatternDef, Pair<string, Material[]>>();
+		public Dictionary<PatternDef, (string texPath, Material[] materials)> maskMatPatterns = new Dictionary<PatternDef, (string, Material[])>();
 
 		public override Material MatSingle => MatNorth;
 
@@ -120,7 +120,7 @@ namespace Vehicles
 		{
 			if (req.shader.SupportsRGBMaskTex())
 			{
-				SmashLog.Error($"<type>Graphic_RGB</type> called <method>Init</method> with regular GraphicRequest. This will result in incorrectly colored RGB masks as <property>ColorThree</property> cannot be properly initialized.");
+				//SmashLog.Error($"<type>Graphic_RGB</type> called <method>Init</method> with regular GraphicRequest. This will result in incorrectly colored RGB masks as <property>ColorThree</property> cannot be properly initialized.");
 			}
 			Init(new GraphicRequestRGB(req), false);
 		}
@@ -130,7 +130,7 @@ namespace Vehicles
 			if (cacheResults is true)
 			{
 				masks = new Texture2D[MatCount];
-				maskMatPatterns = new Dictionary<PatternDef, Pair<string, Material[]>>();
+				maskMatPatterns = new Dictionary<PatternDef, (string, Material[])>();
 			}
 			data = req.graphicData;
 			path = req.path;
@@ -146,7 +146,8 @@ namespace Vehicles
 		{
 			var tmpMaskArray = new Texture2D[MatCount];
 			var patternPointers = new int[MatCount] { 0, 1, 2, 3, 4, 5, 6, 7 };
-			if (req.shader.SupportsRGBMaskTex())
+
+			if (req.shader.SupportsRGBMaskTex() || req.shader.SupportsMaskTex())
 			{
 				tmpMaskArray[0] = ContentFinder<Texture2D>.Get(req.path + "_north" + MaskSuffix, false);
 				tmpMaskArray[0] ??= ContentFinder<Texture2D>.Get(req.path + Graphic_Single.MaskSuffix, false); // _m for single texture to remain consistent with vanilla
@@ -157,7 +158,6 @@ namespace Vehicles
 				tmpMaskArray[5] = ContentFinder<Texture2D>.Get(req.path + "_southEast" + MaskSuffix, false);
 				tmpMaskArray[6] = ContentFinder<Texture2D>.Get(req.path + "_southWest" + MaskSuffix, false);
 				tmpMaskArray[7] = ContentFinder<Texture2D>.Get(req.path + "_northWest" + MaskSuffix, false);
-
 				if (tmpMaskArray[0] is null)
 				{
 					if (tmpMaskArray[2] != null)
@@ -193,6 +193,7 @@ namespace Vehicles
 					{
 						tmpMaskArray[1] = tmpMaskArray[3];
 						patternPointers[1] = 3;
+						eastFlipped = DataAllowsFlip;
 					}
 					else
 					{
@@ -203,17 +204,9 @@ namespace Vehicles
 				}
 				if (tmpMaskArray[3] is null)
 				{
-					if (tmpMaskArray[1] != null)
-					{
-						tmpMaskArray[3] = tmpMaskArray[1];
-						patternPointers[3] = 0;
-						westFlipped = DataAllowsFlip;
-					}
-					else
-					{
-						tmpMaskArray[3] = tmpMaskArray[0];
-						patternPointers[3] = 0;
-					}
+					tmpMaskArray[3] = tmpMaskArray[1];
+					patternPointers[3] = 1;
+					westFlipped = DataAllowsFlip;
 				}
 
 				if (tmpMaskArray[4] is null)
@@ -225,13 +218,13 @@ namespace Vehicles
 				if (tmpMaskArray[5] is null)
 				{
 					tmpMaskArray[5] = tmpMaskArray[2];
-					patternPointers[5] = 0;
+					patternPointers[5] = 2;
 					eastDiagonalRotated = DataAllowsFlip;
 				}
 				if (tmpMaskArray[6] is null)
 				{
 					tmpMaskArray[6] = tmpMaskArray[2];
-					patternPointers[6] = 0;
+					patternPointers[6] = 2;
 					westDiagonalRotated = DataAllowsFlip;
 				}
 				if (tmpMaskArray[7] is null)
@@ -258,7 +251,7 @@ namespace Vehicles
 					displacement = req.displacement,
 					maskTex = tmpMaskArray[i],
 					patternTex = pattern[new Rot8(patternPointers[i])],
-					shaderParameters = req.shaderParameters
+					shaderParameters = req.shaderParameters,
 				};
 				mats[i] = MaterialPoolExpanded.MatFrom(req2);
 			}

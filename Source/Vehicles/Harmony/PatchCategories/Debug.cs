@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Reflection.Emit;
 using UnityEngine;
 using HarmonyLib;
 using Verse;
@@ -49,45 +51,52 @@ namespace Vehicles
 					nameof(DebugWorldObjects)));
 			}
 
-			//VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_RopeTracker), "BreakAllRopes"),
+			//VehicleHarmony.Patch(original: AccessTools.Method(typeof(CameraJumper), "TryJump", parameters: new Type[] { typeof(GlobalTargetInfo), typeof(CameraJumper.MovementMode) }),
 			//	prefix: new HarmonyMethod(typeof(Debug),
-			//	nameof(TestPrefix)),
+			//	nameof(TestPrefix)));
+			//VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_PathFollower), "AtDestinationPosition"),
 			//	postfix: new HarmonyMethod(typeof(Debug),
 			//	nameof(TestPostfix)));
-			//VehicleHarmony.Patch(original: AccessTools.Method(typeof(WorldGrid), nameof(WorldGrid.GetTileCenter)),
+			//VehicleHarmony.Patch(original: AccessTools.Method(typeof(Thing), "ExposeData"),
 			//	finalizer: new HarmonyMethod(typeof(Debug),
 			//	nameof(ExceptionCatcher)));
 		}
 
-		public static void TestPrefix()
+		public static void TestPrefix(GlobalTargetInfo target)
 		{
 			try
 			{
-				Log.Message($"DROP");
+				var adjusted = CameraJumper.GetAdjustedTarget(target);
+				Log.Message($"Jumping to {adjusted} HasThing={adjusted.HasThing} HasWorldObject={adjusted.HasWorldObject} CellValid={adjusted.Cell.IsValid}");
 			}
 			catch (Exception ex)
 			{
-				Log.Error($"[Test Test Prefix] Exception Thrown.\n{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}");
+				Log.Error($"[Test Prefix] Exception Thrown.\n{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}");
 			}
 		}
 
-		public static void TestPostfix()
+		public static void TestPostfix(Pawn ___pawn, LocalTargetInfo ___destination, PathEndMode ___peMode, ref bool __result)
 		{
-            try
-            {
-                //Log.Message($"END");
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"[Test Postfix] Exception Thrown.\n{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}");
-            }
+			try
+			{
+				//Log.Message($"Finished");
+				if (!___pawn.NonHumanlikeOrWildMan())
+				{
+					bool result = ___pawn.CanReachImmediate(___destination, ___peMode);
+					Log.Message($"Result={result} for {___destination} with {___peMode}");
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Error($"[Test Postfix] Exception Thrown.\n{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}");
+			}
 		}
 
-		public static Exception ExceptionCatcher(Exception __exception)
+		public static Exception ExceptionCatcher(Thing __instance, Exception __exception)
 		{
 			if (__exception != null)
 			{
-				SmashLog.Message($"Exception caught! <error>Ex={__exception.Message}</error>");
+				SmashLog.Message($"Exception caught! <error>Ex={__exception.Message}</error> Instance: {__instance}");
 			}
 			return __exception;
 		}
@@ -139,7 +148,7 @@ namespace Vehicles
 				{
 					IntVec3 second = UI.MouseCell();
 					CellRect cellRect = CellRect.FromLimits(first, second).ClipInsideMap(Find.CurrentMap);
-					IntVec3 center = cellRect.CenterCell;
+					IntVec3 center = cellRect.ThingPositionFromRect();
 					foreach (IntVec3 cell in cellRect)
 					{
 						IntVec3 diff = cell - center;
@@ -150,6 +159,36 @@ namespace Vehicles
 				DebugTools.curTool = new DebugTool(label, action, first);
 			});
 			DebugTools.curTool = tool;
+		}
+
+		[DebugAction(VehicleHarmony.VehiclesLabel, "Regenerate WorldPathGrid", allowedGameStates = AllowedGameStates.WorldRenderedNow)]
+		public static void DebugRegenerateWorldPathGrid()
+		{
+			Find.World.GetCachedWorldComponent<WorldVehiclePathGrid>().RecalculateAllPerceivedPathCosts();
+		}
+
+		[DebugAction(VehicleHarmony.VehiclesLabel, "Ground All Aerial Vehicles", allowedGameStates = AllowedGameStates.Playing)]
+		public static void DebugGroundAllAerialVehicles()
+		{
+			foreach (AerialVehicleInFlight aerialVehicle in VehicleWorldObjectsHolder.Instance.AerialVehicles)
+			{
+				DebugLandAerialVehicle(aerialVehicle);
+			}
+		}
+
+		public static void DebugLandAerialVehicle(AerialVehicleInFlight aerialVehicleInFlight)
+		{
+			List<Settlement> playerSettlements = Find.WorldObjects.Settlements.Where(s => s.Faction == Faction.OfPlayer).ToList();
+			Settlement nearestSettlement = playerSettlements.MinBy(s => Ext_Math.SphericalDistance(s.DrawPos, aerialVehicleInFlight.DrawPos));
+
+			LaunchProtocol launchProtocol = aerialVehicleInFlight.vehicle.CompVehicleLauncher.launchProtocol;
+			Rot4 vehicleRotation = launchProtocol.LandingProperties?.forcedRotation ?? Rot4.Random;
+			IntVec3 cell = CellFinderExtended.RandomCenterCell(nearestSettlement.Map, (IntVec3 cell) => !MapHelper.VehicleBlockedInPosition(aerialVehicleInFlight.vehicle, Current.Game.CurrentMap, cell, vehicleRotation));
+			VehicleSkyfaller_Arriving skyfaller = (VehicleSkyfaller_Arriving)ThingMaker.MakeThing(aerialVehicleInFlight.vehicle.CompVehicleLauncher.Props.skyfallerIncoming);
+			skyfaller.vehicle = aerialVehicleInFlight.vehicle;
+
+			GenSpawn.Spawn(skyfaller, cell, nearestSettlement.Map, vehicleRotation);
+			aerialVehicleInFlight.Destroy();
 		}
 	}
 }

@@ -8,417 +8,343 @@ using SmashTools;
 
 namespace Vehicles
 {
-	public class Command_CooldownAction : Command
+	public class Command_CooldownAction : Command_Turret
 	{
-		protected const float AmmoWindowOffset = 5f;
+		protected const float TurretGizmoPadding = 5;
 
-		protected readonly Color DarkGrey = new Color(0.05f, 0.05f, 0.05f, 0.5f);
+		protected const float GizmoHeight = 75;
+		protected const float SubIconSize = GizmoHeight / 2.25f;
 
-		public TargetingParameters targetingParams;
-		public List<VehicleTurret> turrets = new List<VehicleTurret>();
+		protected const float CooldownBarWidth = 32;
+		protected const float PaddingBetweenElements = 2;
 
-		protected Color alphaColorTicked = new Color(GUI.color.r * 0.5f, GUI.color.g * 0.5f, GUI.color.b * 0.5f, 0.5f);
-
-		protected bool canReload;
-
-		public Command_CooldownAction()
+		protected override float RecalculateWidth()
 		{
-			
-		}
-
-		
-		public virtual void PostVariablesInit()
-		{
-			canReload = turrets.All(t => t.turretDef.ammunition != null);
-		}
-
-		public override void ProcessInput(Event ev)
-		{
-			if (turrets.All(t => t.reloadTicks <= 0))
+			float minWidth = GizmoHeight;
+			if (turret.CanOverheat)
 			{
-				SoundDefOf.Tick_Tiny.PlayOneShotOnCamera(null);
-				base.ProcessInput(ev);
-				foreach (VehicleTurret turret in turrets)
-				{
-					Vector3 target = turret.TurretLocation.PointFromAngle(turret.MaxRange, turret.TurretRotation);
-					turret.SetTarget(target.ToIntVec3());
-					turret.PushTurretToQueue();
-					turret.ResetPrefireTimer();
-				}
+				minWidth += CooldownBarWidth + TurretGizmoPadding;
 			}
+			minWidth += turret.SubGizmos.Count() * SubIconSize;
+			return minWidth;
 		}
 
-		public override float GetWidth(float maxWidth)
+		public override void FireTurret(VehicleTurret turret)
 		{
-			return turrets.All(t => t.turretDef.cooldown != null) ? 279 : 210f;
+			if (turret.ReloadTicks <= 0)
+			{
+				Vector3 target = turret.TurretLocation.PointFromAngle(turret.MaxRange, turret.TurretRotation);
+				turret.SetTarget(target.ToIntVec3());
+				turret.PushTurretToQueue();
+				turret.ResetPrefireTimer();
+			}
 		}
 
 		public override GizmoResult GizmoOnGUI(Vector2 topLeft, float maxWidth, GizmoRenderParms parms)
 		{
-			Text.Font = GameFont.Tiny;
-			bool flag = false;
-			bool haltFlag = false;
-			Rect rect = new Rect(topLeft.x, topLeft.y, GetWidth(maxWidth), 75f);
-			Rect gizmoRect = new Rect(rect.x, rect.y, rect.height, rect.height).ContractedBy(6f);
-			Rect indicatorIconRect = new Rect(gizmoRect.x + gizmoRect.width / 2f, gizmoRect.y + gizmoRect.height / 2, gizmoRect.width / 2, gizmoRect.height / 2);
-
-			Material material = (!disabled) ? null : TexUI.GrayscaleGUI;
-			Material cooldownMat = turrets.Any(t => t.OnCooldown) ? TexUI.GrayscaleGUI : material;
-			
-			var gizmoColor = GUI.color;
-			var ammoColor = GUI.color;
-			var reloadColor = GUI.color;
-			var fireModeColor = GUI.color;
-			var autoTargetColor = GUI.color;
-
-			bool ammoLoaded = true;
-
-			Widgets.DrawWindowBackground(rect);
-			Color haltColor = Color.white;
-			if (turrets.Any(t => t.loadedAmmo is null || turrets.Any(t => t.shellCount <= 0)) && canReload)
+			GUIState.Push();
+			try
 			{
-				disabledReason += "NoAmmoLoadedCannon".Translate();
-				ammoLoaded = false;
-			}
-			else if (Mouse.IsOver(gizmoRect))
-			{
-				if (turrets.FirstOrDefault().cannonTarget.IsValid && Mouse.IsOver(indicatorIconRect))
+				Text.Font = GameFont.Tiny;
+				Rect rect = new Rect(topLeft.x, topLeft.y, GetWidth(maxWidth), GizmoHeight);
+
+				Material material = !disabled ? null : TexUI.GrayscaleGUI;
+				Material cooldownMaterial = turret.OnCooldown ? TexUI.GrayscaleGUI : material;
+
+				Widgets.DrawWindowBackground(rect);
+				rect = rect.ContractedBy(TurretGizmoPadding); //padding between all contents inside gizmo background
+
+				Rect gizmoRect = new Rect(rect.x, rect.y, rect.height, rect.height);
+				float gizmoWidth = DrawGizmoButton(gizmoRect, cooldownMaterial, out bool mouseOver, out bool ammoLoaded, out bool fireTurret, out bool haltTurret);
+
+				GUIState.Reset();
+
+				Rect cooldownRect = new Rect(gizmoRect.x + gizmoWidth + TurretGizmoPadding, gizmoRect.y, CooldownBarWidth, gizmoRect.height);
+				float cooldownWidth = DrawCooldownBar(cooldownRect);
+
+				float topIconSize = gizmoRect.height / 2;
+				float barWidth = rect.width - (gizmoWidth + cooldownWidth + TurretGizmoPadding);
+				Rect topBarRect = new Rect(cooldownRect.x + cooldownWidth, gizmoRect.y, barWidth, topIconSize);
+				VehicleTurret.SubGizmo subGizmo = DrawTopBar(topBarRect, ref mouseOver);
+				Rect bottomBarRect = new Rect(topBarRect.x, topBarRect.y + topIconSize, topBarRect.width, topIconSize);
+				DrawBottomBar(bottomBarRect);
+
+				GUIState.Reset();
+
+				if (!LabelCap.NullOrEmpty())
 				{
-					haltColor = GenUI.MouseoverColor;
+					GUI.color = Color.white;
+					Text.Font = GameFont.Tiny;
+
+					float textWidth = gizmoRect.width + TurretGizmoPadding * 2;
+					float textHeight = Text.CalcHeight(LabelCap, textWidth);
+					Rect labelRect = new Rect(gizmoRect.x, rect.yMax - textHeight + 12f, textWidth, textHeight);
+					GUI.DrawTexture(labelRect, TexUI.GrayTextBG);
+
+					Text.Anchor = TextAnchor.UpperCenter;
+					Widgets.Label(labelRect, LabelCap);
 				}
-				else
+
+				GUIState.Reset();
+
+				if (DoTooltip)
 				{
-					if (!disabled && !turrets.Any(t => t.OnCooldown))
+					string tooltip = Desc;
+					if (!disabledReason.NullOrEmpty())
+					{
+						tooltip = $"{Desc}\n\n{"DisabledCommand".Translate()}: {disabledReason}";
+					}
+					TooltipHandler.TipRegion(gizmoRect, tooltip);
+				}
+
+				GUIState.Reset();
+
+				if (!HighlightTag.NullOrEmpty() && (Find.WindowStack.FloatMenu == null || !Find.WindowStack.FloatMenu.windowRect.Overlaps(gizmoRect)))
+				{
+					UIHighlighter.HighlightOpportunity(gizmoRect, HighlightTag);
+				}
+
+				GUIState.Reset();
+
+				if (hotKey is KeyBindingDef keyBind && keyBind.MainKey != KeyCode.None && !GizmoGridDrawer.drawnHotKeys.Contains(keyBind.MainKey))
+				{
+					Rect hotkeyRect = new Rect(gizmoRect.x + 5f, rect.y + 5f, gizmoRect.width - 10f, 18f);
+					Widgets.Label(hotkeyRect, keyBind.MainKey.ToStringReadable());
+					GizmoGridDrawer.drawnHotKeys.Add(keyBind.MainKey);
+					if (hotKey.KeyDownEvent)
+					{
+						fireTurret = true;
+						Event.current.Use();
+					}
+				}
+
+				if (subGizmo.IsValid) subGizmo.onClick();
+
+				GUIState.Reset();
+				Text.Font = GameFont.Small;
+
+				if (haltTurret)
+				{
+					if (disabled)
+					{
+						if (!disabledReason.NullOrEmpty())
+						{
+							Messages.Message(disabledReason, MessageTypeDefOf.RejectInput, false);
+						}
+						return new GizmoResult(GizmoState.Mouseover);
+					}
+					turret.SetTarget(LocalTargetInfo.Invalid);
+					return new GizmoResult(GizmoState.Clear);
+				}
+
+				if (fireTurret && !turret.OnCooldown)
+				{
+					if (disabled)
+					{
+						if (!disabledReason.NullOrEmpty())
+						{
+							Messages.Message(disabledReason, MessageTypeDefOf.RejectInput, false);
+						}
+						return new GizmoResult(GizmoState.Mouseover);
+					}
+					if (!TutorSystem.AllowAction(TutorTagSelect))
+					{
+						return new GizmoResult(GizmoState.Mouseover);
+					}
+					GizmoResult result = new GizmoResult(GizmoState.Interacted, Event.current);
+					TutorSystem.Notify_Event(TutorTagSelect);
+					return result;
+				}
+
+				if (mouseOver)
+				{
+					return new GizmoResult(GizmoState.Mouseover);
+				}
+				return new GizmoResult(GizmoState.Clear);
+			}
+			finally
+			{
+				GUIState.Pop();
+			}
+		}
+
+		protected virtual float DrawGizmoButton(Rect rect, Material cooldownMaterial, out bool mouseOver, out bool ammoLoaded, out bool fireTurret, out bool haltTurret)
+		{
+			rect = rect.ContractedBy(2);
+			
+			ammoLoaded = true;
+			mouseOver = false;
+			fireTurret = false;
+			
+			Widgets.BeginGroup(rect);
+			{
+				Rect gizmoRect = rect.AtZero();
+				Rect subIconRect = new Rect(gizmoRect.xMax - SubIconSize, gizmoRect.y, SubIconSize, SubIconSize); //top right
+				if ((turret.loadedAmmo is null || turret.shellCount <= 0) && turret.turretDef.ammunition != null)
+				{
+					disabledReason += "VF_NoAmmoLoadedTurret".Translate();
+					ammoLoaded = false;
+				}
+				else if (!turret.OnCooldown && Mouse.IsOver(gizmoRect) && (!Mouse.IsOver(subIconRect) || !turret.cannonTarget.IsValid))
+				{
+					if (!disabled)
 					{
 						GUI.color = GenUI.MouseoverColor;
 					}
-				}
-				flag = true;
-				turrets.ForEach(t => t.GizmoHighlighted = true);
-			}
-			else
-			{
-				turrets.ForEach(t => t.GizmoHighlighted = false);
-			}
-
-			GenUI.DrawTextureWithMaterial(gizmoRect, BGTex, cooldownMat, default);
-			MouseoverSounds.DoRegion(gizmoRect, SoundDefOf.Mouseover_Command);
-			GUI.color = IconDrawColor;
-			Widgets.DrawTextureFitted(gizmoRect, icon, iconDrawScale, iconProportions, iconTexCoords, iconAngle, turrets.FirstOrDefault().CannonMaterial);
-			if (!ammoLoaded)
-			{
-				Widgets.DrawBoxSolid(gizmoRect, DarkGrey);
-			}
-			GUI.color = gizmoColor;
-
-			if (turrets.Any(t => t.OnCooldown))
-			{
-				GUI.color = haltColor;
-				GenUI.DrawTextureWithMaterial(indicatorIconRect, turrets.FirstOrDefault().FireIcon, CompFireOverlay.FireGraphic.MatAt(Rot4.North));
-				GUI.color = gizmoColor;
-			}
-			else if (turrets.FirstOrDefault().cannonTarget.IsValid)
-			{
-				GUI.color = haltColor;
-				GenUI.DrawTextureWithMaterial(indicatorIconRect, VehicleTex.HaltIcon, material, default);
-				GUI.color = gizmoColor;
-			}
-
-			float gizmoWidth = gizmoRect.width / 2;
-			float gizmoHeight = gizmoRect.height / 2 - 2;
-			Rect cooldownRect = new Rect(gizmoRect.x + gizmoRect.width + 7f, gizmoRect.y, gizmoWidth, gizmoRect.height);
-			Rect ammoRect = new Rect(cooldownRect.x + cooldownRect.width + 7f, cooldownRect.y + 1, gizmoRect.width / 2, gizmoHeight);
-			Rect reloadRect = new Rect(ammoRect.x + ammoRect.width, ammoRect.y, gizmoWidth, gizmoHeight);
-			Rect fireModeRect = new Rect(reloadRect.x + ammoRect.width, ammoRect.y, gizmoWidth, gizmoHeight);
-			Rect autoTargetRect = new Rect(fireModeRect.x + ammoRect.width, ammoRect.y, gizmoWidth, gizmoHeight);
-			
-			float heatPoints = turrets.Average(t => t.currentHeatRate);
-			UIElements.VerticalFillableBar(cooldownRect, heatPoints / VehicleTurret.MaxHeatCapacity, 
-				turrets.Any(t => t.OnCooldown) ? TexData.RedTex : TexData.HeatColorPercent(heatPoints / VehicleTurret.MaxHeatCapacity), VehicleTex.EmptyBarTex, true);
-
-			if (canReload && Mouse.IsOver(ammoRect))
-			{
-				flag = true;
-				if (!disabled)
-				{
-					GUI.color = GenUI.MouseoverColor;
-				}
-			}
-			float widthHeight = gizmoRect.height / 2 - 2;
-			GenUI.DrawTextureWithMaterial(ammoRect, BGTex, canReload ? material : TexUI.GrayscaleGUI, default);
-			if (turrets.Any(t => t.loadedAmmo != null))
-			{
-				alphaColorTicked.a = turrets.Max(t => t.CannonIconAlphaTicked);
-				Graphics.DrawTexture(ammoRect, turrets.FirstOrDefault().loadedAmmo.uiIcon, new Rect(0f, 0f, 1f, 1f), 0, 0, 0, 0, alphaColorTicked, material);
-
-				Rect ammoCountRect = new Rect(ammoRect);
-				string ammoCount = turrets.FirstOrDefault().vehicle.inventory.innerContainer.Where(td => td.def == turrets.FirstOrDefault().loadedAmmo).Select(t => t.stackCount).Sum().ToStringSafe();
-				ammoCountRect.y += ammoCountRect.height / 2;
-				ammoCountRect.x += ammoCountRect.width - Text.CalcSize(ammoCount).x;
-				Widgets.Label(ammoCountRect, ammoCount);
-			}
-			else if (turrets.FirstOrDefault().turretDef.genericAmmo)
-			{
-				Graphics.DrawTexture(ammoRect, turrets.FirstOrDefault().turretDef.ammunition.AllowedThingDefs.FirstOrDefault().uiIcon, material);
-
-				Rect ammoCountRect = new Rect(ammoRect);
-				string ammoCount = turrets.FirstOrDefault().vehicle.inventory.innerContainer.Where(td => td.def == turrets.FirstOrDefault().turretDef.ammunition.AllowedThingDefs.FirstOrDefault()).Select(t => t.stackCount).Sum().ToStringSafe();
-				ammoCountRect.y += ammoCountRect.height / 2;
-				ammoCountRect.x += ammoCountRect.width - Text.CalcSize(ammoCount).x;
-				Widgets.Label(ammoCountRect, ammoCount);
-			}
-
-			GUI.color = ammoColor;
-			if (canReload && Mouse.IsOver(reloadRect))
-			{
-				flag = true;
-				if (!disabled)
-				{
-					GUI.color = GenUI.MouseoverColor;
-				}
-			}
-			Graphics.DrawTexture(reloadRect, VehicleTex.ReloadIcon, canReload ? material : TexUI.GrayscaleGUI);
-			TooltipHandler.TipRegion(reloadRect, "VehicleReloadVehicleTurret".Translate());
-
-			GUI.color = fireModeColor;
-			if (Mouse.IsOver(fireModeRect))
-			{
-				flag = true;
-				if (!disabled)
-				{
-					GUI.color = GenUI.MouseoverColor;
-				}
-			}
-			Graphics.DrawTexture(fireModeRect, turrets.FirstOrDefault().CurrentFireMode.Icon, material);
-			TooltipHandler.TipRegion(fireModeRect, turrets.FirstOrDefault().CurrentFireMode.label);
-
-			GUI.color = autoTargetColor;
-			if (!turrets.FirstOrDefault().CanAutoTarget)
-			{
-				GUI.color = GenUI.MouseoverColor;
-			}
-			else if (Mouse.IsOver(autoTargetRect))
-			{
-				flag = true;
-				if (!disabled)
-				{
-					GUI.color = GenUI.SubtleMouseoverColor;
-				}
-			}
-			Graphics.DrawTexture(autoTargetRect, VehicleTex.AutoTargetIcon, null);
-			Rect checkboxRect = new Rect(autoTargetRect.x + autoTargetRect.width / 2, autoTargetRect.y + autoTargetRect.height / 2, autoTargetRect.width / 2, autoTargetRect.height / 2);
-			GUI.DrawTexture(checkboxRect, turrets.FirstOrDefault().AutoTarget ? Widgets.CheckboxOnTex : Widgets.CheckboxOffTex);//cannon.autoTargeting ? material : DisabledCBMat
-			TooltipHandler.TipRegion(autoTargetRect, "AutoTargeting".Translate(turrets.FirstOrDefault().AutoTarget.ToString()));
-
-			GUI.color = reloadColor;
-			Rect reloadBar = rect.ContractedBy(6f);
-			reloadBar.yMin = rect.y + (rect.height / 2) + 1;
-			reloadBar.xMin = ammoRect.x;
-			Widgets.FillableBar(reloadBar, (float)turrets.FirstOrDefault().shellCount / turrets.FirstOrDefault().turretDef.magazineCapacity, VehicleTex.FullBarTex, VehicleTex.EmptyBarTex, true);
-			var font = Text.Font;
-			var anchor = Text.Anchor;
-			Text.Font = GameFont.Small;
-			Text.Anchor = TextAnchor.MiddleCenter;
-			string ammoCountLabel = string.Format("{0} / {1}", turrets.FirstOrDefault().shellCount.ToString("F0"), turrets.FirstOrDefault().turretDef.magazineCapacity.ToString("F0"));
-			if (turrets.FirstOrDefault().turretDef.magazineCapacity <= 0)
-			{
-				ammoCountLabel = "\u221E";
-				Text.Font = GameFont.Medium;
-			}
-			Widgets.Label(reloadBar, ammoCountLabel);
-			Text.Font = font;
-			Text.Anchor = anchor;
-
-			GUI.color = Color.white;
-			bool flag2 = false;
-			bool flag3 = false;
-			bool flag4 = false;
-			bool flag5 = false;
-			bool flag6 = false;
-			KeyCode keyCode = (hotKey != null) ? hotKey.MainKey : KeyCode.None;
-			if (keyCode != KeyCode.None && !GizmoGridDrawer.drawnHotKeys.Contains(keyCode))
-			{
-				Rect rect2 = new Rect(gizmoRect.x + 5f, rect.y + 5f, gizmoRect.width - 10f, 18f);
-				Widgets.Label(rect2, keyCode.ToStringReadable());
-				GizmoGridDrawer.drawnHotKeys.Add(keyCode);
-				if (hotKey.KeyDownEvent)
-				{
-					flag2 = true;
-					Event.current.Use();
-				}
-			}
-			if(!disabled)
-			{
-				if (turrets.Any(t => t.cannonTarget.IsValid) && Widgets.ButtonInvisible(indicatorIconRect, true))
-				{
-					haltFlag = true;
-				}
-				else if (ammoLoaded && Widgets.ButtonInvisible(gizmoRect, true))
-				{
-					flag2 = true;
-				}
-				if (canReload && Widgets.ButtonInvisible(reloadRect, true))
-				{
-					flag3 = true;
-				}
-				if (canReload && turrets.FirstOrDefault().shellCount > 0 && Widgets.ButtonInvisible(ammoRect, true))
-				{
-					flag4 = true;
-				}
-				if (Widgets.ButtonInvisible(fireModeRect, true))
-				{
-					flag5 = true;
-				}
-				if (Widgets.ButtonInvisible(autoTargetRect, true))
-				{
-					flag6 = true;
-				}
-			}
-
-			string labelCap = LabelCap;
-			if (!labelCap.NullOrEmpty())
-			{
-				float num = Text.CalcHeight(labelCap, rect.width);
-				Rect rect3 = new Rect(rect.x, rect.yMax - num + 12f, rect.width, num);
-				GUI.DrawTexture(rect3, TexUI.GrayTextBG);
-				GUI.color = Color.white;
-				Text.Anchor = TextAnchor.UpperCenter;
-				Widgets.Label(rect3, labelCap);
-				Text.Anchor = TextAnchor.UpperLeft;
-				GUI.color = Color.white;
-			}
-			GUI.color = Color.white;
-			if (DoTooltip)
-			{
-				TipSignal tip = Desc;
-				if (!disabledReason.NullOrEmpty())
-				{
-					string text = tip.text;
-					tip.text = string.Concat(new string[]
-					{
-						text,
-						"\n\n",
-						"DisabledCommand".Translate(),
-						": ",
-						disabledReason
-					});
-				}
-				TooltipHandler.TipRegion(gizmoRect, tip);
-			}
-			if (turrets.Any(t => t.reloadTicks > 0))
-			{
-				float percent = turrets.Max(t => t.reloadTicks) / (float)turrets.FirstOrDefault().MaxTicks;
-				UIElements.VerticalFillableBar(gizmoRect, percent, UIData.FillableBarTexture, UIData.ClearBarTexture);
-			}
-			if (!HighlightTag.NullOrEmpty() && (Find.WindowStack.FloatMenu == null || !Find.WindowStack.FloatMenu.windowRect.Overlaps(gizmoRect)))
-			{
-				UIHighlighter.HighlightOpportunity(gizmoRect, HighlightTag);
-			}
-			Rect ammoWindowRect = new Rect(rect);
-			ammoWindowRect.height = AmmoWindowOffset * 2;
-			ammoWindowRect.width = ammoRect.height * 6 + AmmoWindowOffset * 2;
-			if (turrets.FirstOrDefault().AmmoWindowOpened)
-			{
-				List<ThingDef> allVehicleTurretDefs = turrets.FirstOrDefault().vehicle.inventory.innerContainer.Where(d => turrets.FirstOrDefault().ContainsAmmoDefOrShell(d.def)).Select(t => t.def).Distinct().ToList();
-				ammoWindowRect.height += ammoRect.height + Mathf.CeilToInt(allVehicleTurretDefs.Count / 6) * ammoRect.height;
-				ammoWindowRect.y -= (ammoWindowRect.height + AmmoWindowOffset);
-				GenUI.DrawTextureWithMaterial(ammoWindowRect, VehicleTex.AmmoBG, material, default);
-				ammoWindowRect.yMin += 5f;
-				for(int i = 0; i < allVehicleTurretDefs.Count; i++)
-				{
-					Rect potentialAmmoRect = new Rect(ammoWindowRect.x + ammoRect.height * (i % 6) + 5f, ammoWindowRect.y + ammoRect.height * Mathf.FloorToInt(i / 6), ammoRect.height, ammoRect.height);
-					Graphics.DrawTexture(potentialAmmoRect, allVehicleTurretDefs[i].uiIcon, new Rect(0f, 0f, 1f, 1f), 0, 0, 0, 0, alphaColorTicked, material);
-					if(Mouse.IsOver(potentialAmmoRect))
-					{
-						Graphics.DrawTexture(potentialAmmoRect, TexUI.HighlightTex);
-					}
-					if(Widgets.ButtonInvisible(potentialAmmoRect))
-					{
-						turrets.FirstOrDefault().AmmoWindowOpened = false;
-						turrets.ForEach(t => t.ReloadCannon(allVehicleTurretDefs[i], true));
-						break;
-					}
-					string ammoCount = turrets.FirstOrDefault().vehicle.inventory.innerContainer.Where(td => td.def == allVehicleTurretDefs[i]).Select(t => t.stackCount).Sum().ToStringSafe();
-					potentialAmmoRect.y += potentialAmmoRect.height / 2;
-					potentialAmmoRect.x += potentialAmmoRect.width - Text.CalcSize(ammoCount).x;
-					Widgets.Label(potentialAmmoRect, ammoCount);
-				}
-			}
-			Rect fullRect = new Rect(rect);
-			rect.height += ammoWindowRect.height + AmmoWindowOffset;
-			rect.y -= (ammoWindowRect.height + AmmoWindowOffset);
-			if(!Mouse.IsOver(rect))
-			{
-				turrets.FirstOrDefault().AmmoWindowOpened = false;
-			}
-
-			Text.Font = GameFont.Small;
-			if (flag2 && !turrets.Any(t => t.OnCooldown))
-			{
-				if (disabled)
-				{
-					if (!disabledReason.NullOrEmpty())
-					{
-						Messages.Message(disabledReason, MessageTypeDefOf.RejectInput, false);
-					}
-					return new GizmoResult(GizmoState.Mouseover, null);
-				}
-				if (!TutorSystem.AllowAction(TutorTagSelect))
-				{
-					return new GizmoResult(GizmoState.Mouseover, null);
-				}
-				var result = new GizmoResult(GizmoState.Interacted, Event.current);
-				TutorSystem.Notify_Event(TutorTagSelect);
-				return result;
-			}
-			if (haltFlag)
-			{
-				if (disabled)
-				{
-					if (!disabledReason.NullOrEmpty())
-					{
-						Messages.Message(disabledReason, MessageTypeDefOf.RejectInput, false);
-					}
-					return new GizmoResult(GizmoState.Mouseover, null);
-				}
-				turrets.ForEach(t => t.SetTarget(LocalTargetInfo.Invalid));
-			}
-			if (flag3)
-			{
-				if (turrets.FirstOrDefault().turretDef.genericAmmo)
-				{
-					if (!turrets.FirstOrDefault().vehicle.inventory.innerContainer.Contains(turrets.FirstOrDefault().turretDef.ammunition.AllowedThingDefs.FirstOrDefault()))
-					{
-						Messages.Message("NoAmmoAvailable".Translate(), MessageTypeDefOf.RejectInput);
-					}
-					else
-					{
-						turrets.ForEach(t => t.ReloadCannon(turrets.FirstOrDefault().turretDef.ammunition.AllowedThingDefs.FirstOrDefault()));
-					}
+					mouseOver = true;
+					turret.GizmoHighlighted = true;
 				}
 				else
 				{
-					turrets.FirstOrDefault().AmmoWindowOpened = !turrets.FirstOrDefault().AmmoWindowOpened;
+					turret.GizmoHighlighted = false;
+				}
+
+				GenUI.DrawTextureWithMaterial(gizmoRect, BGTex, cooldownMaterial, default);
+				MouseoverSounds.DoRegion(gizmoRect, SoundDefOf.Mouseover_Command);
+				GUI.color = IconDrawColor;
+
+				GUIState.Push();
+				{
+					Rect turretRect = gizmoRect.ContractedBy(2);
+					(Rect rect, Texture mainTex, Color color, float layer, float angle) turretProps;
+					if (turret.turretDef.gizmoIconTexPath.NullOrEmpty())
+					{
+						turretProps = VehicleGUI.RetrieveTurretSettingsGUIProperties(turretRect, vehicle.VehicleDef, turret, Rot8.North, vehicle.patternData, iconScale: iconDrawScale);
+					}
+					else
+					{
+						turretProps = (new Rect(0, 0, turretRect.width, turretRect.height), turret.GizmoIcon, Color.white, 1, 0);
+					}
+					Widgets.BeginGroup(turretRect);
+					{
+						GUI.color = turretProps.color;
+						//Draw turret facing North for gizmos
+						UIElements.DrawTextureWithMaterialOnGUI(turretRect.AtZero().ExpandedBy(turretRect.width * (iconDrawScale - 1)), turretProps.mainTex, null, 0); 
+					}
+					Widgets.EndGroup();
+				}
+				GUIState.Pop();
+				if (!ammoLoaded)
+				{
+					Widgets.DrawBoxSolid(gizmoRect, DarkGrey);
+				}
+
+				if (turret.ReloadTicks > 0)
+				{
+					float percent = turret.ReloadTicks / (float)turret.MaxTicks;
+					UIElements.VerticalFillableBar(gizmoRect, percent, UIData.FillableBarTexture, UIData.ClearBarTexture);
+				}
+
+				GUIState.Reset();
+
+				if (DrawSubIcons(subIconRect, cooldownMaterial, out haltTurret))
+				{
+					mouseOver = false;
+					fireTurret = false;
+				}
+				else if (ammoLoaded && Widgets.ButtonInvisible(gizmoRect, true))
+				{
+					fireTurret = true;
 				}
 			}
-			if (flag4)
+			Widgets.EndGroup();
+
+			return rect.width;
+		}
+
+		/// <summary>
+		/// Sub icons rendered in bottom right of Gizmo button
+		/// </summary>
+		/// <param name="rect"></param>
+		/// <param name="material"></param>
+		/// <param name="haltTurret"></param>
+		/// <returns>Mouse is over SubIcon rect</returns>
+		protected virtual bool DrawSubIcons(Rect rect, Material material, out bool haltTurret)
+		{
+			bool mouseOverSubIcon = false;
+			haltTurret = false;
+
+			if (turret.OnCooldown)
 			{
-				turrets.ForEach(t => t.TryRemoveShell());
-				SoundDefOf.Artillery_ShellLoaded.PlayOneShot(new TargetInfo(turrets.FirstOrDefault().vehicle.Position, turrets.FirstOrDefault().vehicle.Map, false));
+				GenUI.DrawTextureWithMaterial(rect, turret.FireIcon, CompFireOverlay.FireGraphic.MatAt(Rot4.North));
 			}
-			if (flag5)
+			else if (turret.cannonTarget.IsValid)
 			{
-				turrets.ForEach(t => t.CycleFireMode());
+				if (!disabled && Widgets.ButtonInvisible(rect, true))
+				{
+					SoundDefOf.Click.PlayOneShotOnCamera();
+					haltTurret = true;
+				}
+
+				if (!disabled && Mouse.IsOver(rect))
+				{
+					mouseOverSubIcon = true;
+					GUI.color = GenUI.MouseoverColor;
+				}
+				GenUI.DrawTextureWithMaterial(rect, VehicleTex.HaltIcon, material, default);
 			}
-			if(flag6)
+			return mouseOverSubIcon; //No MouseOver for Gizmo rect if mouse is over active sub icon
+		}
+
+		protected virtual float DrawCooldownBar(Rect rect)
+		{
+			if (turret.CanOverheat)
 			{
-				turrets.ForEach(t => t.SwitchAutoTarget());
+				float heatPercent = turret.currentHeatRate / VehicleTurret.MaxHeatCapacity;
+				UIElements.VerticalFillableBar(rect, heatPercent, TexData.HeatColorPercent(heatPercent), BaseContent.BlackTex, doBorder: true);
+				return rect.width + TurretGizmoPadding;
 			}
-			if (flag)
+			return 0;
+		}
+
+		protected virtual VehicleTurret.SubGizmo DrawTopBar(Rect rect, ref bool mouseOver)
+		{
+			VehicleTurret.SubGizmo clickedGizmo = VehicleTurret.SubGizmo.None;
+			GUIState.Push();
 			{
-				return new GizmoResult(GizmoState.Mouseover, null);
+				Rect subGizmoRect = new Rect(rect.x, rect.y, rect.height, rect.height);
+				foreach (VehicleTurret.SubGizmo subGizmo in turret.SubGizmos)
+				{
+					if (!disabled)
+					{
+						TooltipHandler.TipRegion(subGizmoRect, subGizmo.tooltip);
+						if (subGizmo.canClick() && Mouse.IsOver(subGizmoRect))
+						{
+							mouseOver = true;
+							GUI.color = GenUI.SubtleMouseoverColor; //MouseoverColor
+							if (Widgets.ButtonInvisible(subGizmoRect))
+							{
+								clickedGizmo = subGizmo;
+							}
+						}
+					}
+					subGizmo.drawGizmo(subGizmoRect);
+					GUIState.Reset();
+					subGizmoRect.x += SubIconSize;
+				}
 			}
-			return new GizmoResult(GizmoState.Clear, null);
+			GUIState.Pop();
+
+			return clickedGizmo;
+		}
+
+		protected virtual void DrawBottomBar(Rect rect)
+		{
+			Widgets.FillableBar(rect, (float)turret.shellCount / turret.turretDef.magazineCapacity, VehicleTex.FullBarTex, VehicleTex.EmptyBarTex, true);
+
+			GUIState.Push();
+			{
+				Text.Font = GameFont.Small;
+				Text.Anchor = TextAnchor.MiddleCenter;
+				string ammoCountLabel = string.Format("{0} / {1}", turret.shellCount.ToString("F0"), turret.turretDef.magazineCapacity.ToString("F0"));
+				if (turret.turretDef.magazineCapacity <= 0)
+				{
+					ammoCountLabel = "\u221E";
+					Text.Font = GameFont.Medium;
+				}
+				Widgets.Label(rect, ammoCountLabel);
+			}
+			GUIState.Pop();
 		}
 	}
 }

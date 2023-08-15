@@ -13,12 +13,6 @@ namespace Vehicles
 		public const int MidRange = 15;
 		public const int FarRange = 25;
 
-		/// <summary>
-		/// Solid Color Textures
-		/// </summary>
-		public static readonly Texture2D FillableBarBackgroundTex = SolidColorMaterials.NewSolidColorTexture(Color.black);
-		public static readonly Texture2D FillableBarInnerTex = SolidColorMaterials.NewSolidColorTexture(new ColorInt(19, 22, 27).ToColor);
-
 		public static readonly Texture2D YellowTex = SolidColorMaterials.NewSolidColorTexture(new ColorInt(255, 210, 45).ToColor);
 		public static readonly Texture2D YellowOrangeTex = SolidColorMaterials.NewSolidColorTexture(new ColorInt(255, 175, 45).ToColor);
 		public static readonly Texture2D OrangeTex = SolidColorMaterials.NewSolidColorTexture(new ColorInt(255, 110, 15).ToColor);
@@ -37,7 +31,7 @@ namespace Vehicles
 		public static readonly Texture2D SearchLightTex = SolidColorMaterials.NewSolidColorTexture(new ColorInt(155, 30, 30, 40).ToColor);
 		public static readonly Texture2D FillableBarTexture = SolidColorMaterials.NewSolidColorTexture(0.5f, 0.5f, 0.5f, 0.5f);
 		public static readonly Texture2D ClearBarTexture = BaseContent.ClearTex;
-		
+
 		/// <summary>
 		/// World Materials with color
 		/// </summary>

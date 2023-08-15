@@ -1,4 +1,5 @@
-﻿using RimWorld;
+﻿using System.Linq;
+using RimWorld;
 using Verse;
 using Verse.AI;
 using SmashTools;
@@ -7,6 +8,11 @@ namespace Vehicles
 {
 	public class JobGiver_GotoTravelDestinationVehicle : JobGiver_GotoTravelDestination
 	{
+		// Amble = Raiders + Vehicle Formations
+		// Walk = 
+		// Jog = Normal Speed
+		// Sprint = Speed Away (escaping raiders?)
+
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			if (pawn is VehiclePawn vehicle)
@@ -16,16 +22,16 @@ namespace Vehicles
 				{
 					return null;
 				}
-				if (!vehicle.CanReachVehicle(cell, PathEndMode.OnCell, PawnUtility.ResolveMaxDanger(pawn, maxDanger), TraverseMode.ByPawn))
+				if (!vehicle.CanReachVehicle(cell, PathEndMode.Touch, PawnUtility.ResolveMaxDanger(pawn, maxDanger), TraverseMode.ByPawn))
 				{
 					return null;
 				}
 				Job job = new Job(JobDefOf.Goto, cell)
 				{
-					locomotionUrgency = PawnUtility.ResolveLocomotion(pawn, locomotionUrgency),
+					locomotionUrgency = LocomotionUrgency.Jog,
 					expiryInterval = jobMaxDuration
 				};
-				if (vehicle.InhabitedCellsProjected(cell, Rot8.Invalid).NotNullAndAny(cell => pawn.Map.exitMapGrid.IsExitCell(cell)))
+				if (vehicle.InhabitedCellsProjected(cell, Rot8.Invalid).Any(cell => pawn.Map.exitMapGrid.IsExitCell(cell)))
 				{
 					job.exitMapOnArrival = true;
 				}

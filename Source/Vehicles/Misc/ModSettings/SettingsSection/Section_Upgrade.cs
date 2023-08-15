@@ -18,14 +18,14 @@ namespace Vehicles
 			{
 				if (VehicleMod.selectedDef != null)
 				{
-					yield return new FloatMenuOption("DevModeResetVehicle".Translate(VehicleMod.selectedDef.LabelCap), delegate ()
+					yield return new FloatMenuOption("VF_DevMode_ResetVehicle".Translate(VehicleMod.selectedDef.LabelCap), delegate ()
 					{
 						SettingsCustomizableFields.PopulateSaveableUpgrades(VehicleMod.selectedDef, true);
 					});
 				}
-				yield return new FloatMenuOption("DevModeResetAllVehicles".Translate(), () => ResetSettings());
+				yield return new FloatMenuOption("VF_DevMode_ResetAllVehicles".Translate(), () => ResetSettings());
 
-				yield return new FloatMenuOption("DevModeResetAll".Translate(), delegate ()
+				yield return new FloatMenuOption("VF_DevMode_ResetAll".Translate(), delegate ()
 				{
 					VehicleMod.ResetAllSettings();
 				});
@@ -43,7 +43,7 @@ namespace Vehicles
 			upgradeSettings.Clear();
 			if (VehicleMod.ModifiableSettings)
 			{
-				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefs)
+				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefsListForReading)
 				{
 					SettingsCustomizableFields.PopulateSaveableUpgrades(def, true);
 				}
@@ -52,13 +52,13 @@ namespace Vehicles
 
 		public override void ExposeData()
 		{
-			Scribe_NestedCollections.Look(ref upgradeSettings, "upgradeSettings", LookMode.Value, LookMode.Deep, LookMode.Undefined, true);
+			Scribe_NestedCollections.Look(ref upgradeSettings, "upgradeSettings", LookMode.Value, LookMode.Deep, LookMode.Undefined);
 		}
 
 		public override void DrawSection(Rect rect)
 		{
 			DrawVehicleUpgrades(rect);
-			VehicleMod.DrawVehicleList(rect, (bool valid) => valid ? string.Empty : "VehicleNonUpgradeableSettingsTooltip".Translate().ToString(),
+			VehicleMod.DrawVehicleList(rect, (bool valid) => valid ? string.Empty : "VF_NonUpgradeableSettingsTooltip".Translate().ToString(),
 						(VehicleDef def) => !VehicleMod.settingsDisabledFor.Contains(def.defName) && def.HasComp(typeof(CompUpgradeTree)));
 
 		}

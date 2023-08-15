@@ -27,6 +27,8 @@ namespace Vehicles
 
 		public FlightNode Last => nodes.LastOrDefault();
 
+		public bool Empty => nodes.NullOrEmpty();
+
 		public FlightNode this[int index] => nodes[index];
 
 		public bool Circling => circling;
@@ -64,7 +66,7 @@ namespace Vehicles
 				{
 					Vector3 nextTile = Find.WorldGrid.GetTileCenter(Last.tile);
 					float distance = Ext_Math.SphericalDistance(start, nextTile);
-					float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / distance) * aerialVehicle.vehicle.CompVehicleLauncher.FlySpeed;
+					float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / distance) * aerialVehicle.vehicle.CompVehicleLauncher.FlightSpeed;
 					ticksLeft += Mathf.RoundToInt(transitionPctLeft / speedPctPerTick);
 				}
 				else
@@ -75,7 +77,7 @@ namespace Vehicles
 						float distance = Ext_Math.SphericalDistance(start, nextTile);
 						start = nextTile;
 
-						float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / distance) * aerialVehicle.vehicle.CompVehicleLauncher.FlySpeed;
+						float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / distance) * aerialVehicle.vehicle.CompVehicleLauncher.FlightSpeed;
 						ticksLeft += Mathf.RoundToInt(transitionPctLeft / speedPctPerTick);
 						transitionPctLeft = 1; //Only first node being traveled to has any progression
 					}
@@ -90,6 +92,17 @@ namespace Vehicles
 			First.RecalculateCenter();
 		}
 
+		public void RecacheCenters()
+		{
+			if (!nodes.NullOrEmpty())
+			{
+				for (int i = 0; i < nodes.Count; i++)
+				{
+					nodes[i].RecalculateCenter();
+				}
+			}
+		}
+
 		public void AddNode(int tile, AerialVehicleArrivalAction arrivalAction = null)
 		{
 			nodes.Add(new FlightNode(tile, arrivalAction));
@@ -97,7 +110,8 @@ namespace Vehicles
 
 		public void PushCircleAt(int tile)
 		{
-			reconTiles = Ext_World.GetTileNeighbors(tile, aerialVehicle.vehicle.CompVehicleLauncher.ReconDistance, aerialVehicle.DrawPos);
+			reconTiles.Clear();
+			Ext_World.GetTileNeighbors(tile, reconTiles, radius: aerialVehicle.vehicle.CompVehicleLauncher.ReconDistance, aerialVehicle.DrawPos);
 			foreach (int neighborTile in reconTiles)
 			{
 				nodes.Insert(0, new FlightNode(neighborTile));
@@ -111,7 +125,8 @@ namespace Vehicles
 			{
 				nodes.Pop();
 			}
-			reconTiles = Ext_World.GetTileNeighbors(tile, aerialVehicle.vehicle.CompVehicleLauncher.ReconDistance, aerialVehicle.DrawPos);
+			reconTiles.Clear();
+			Ext_World.GetTileNeighbors(tile, reconTiles, radius: aerialVehicle.vehicle.CompVehicleLauncher.ReconDistance, aerialVehicle.DrawPos);
 			foreach (int rTile in reconTiles)
 			{
 				nodes.Add(new FlightNode(rTile));
@@ -182,11 +197,14 @@ namespace Vehicles
 	public struct FlightNode : IExposable
 	{
 		public int tile;
-		public Vector3 center;
+		public Vector3 origin;
 		public AerialVehicleArrivalAction arrivalAction;
 
 		public bool spaceObject;
+
 		public WorldObject WorldObject { get; private set; }
+
+		public Vector3 Center => WorldObject != null ? WorldObject.DrawPos : origin;
 
 		public FlightNode(int tile)
 		{
@@ -194,7 +212,7 @@ namespace Vehicles
 			arrivalAction = null;
 
 			WorldObject = WorldHelper.WorldObjectAt(tile);
-			center = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
+			origin = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
 		}
 
 		public FlightNode(int tile, AerialVehicleArrivalAction arrivalAction)
@@ -203,25 +221,25 @@ namespace Vehicles
 			this.arrivalAction = arrivalAction;
 
 			WorldObject = WorldHelper.WorldObjectAt(tile);
-			center = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
+			origin = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
 		}
 
 		public void RecalculateCenter()
 		{
 			if (spaceObject)
 			{
-				center = WorldHelper.GetTilePos(tile, WorldObject, out _);
+				origin = WorldHelper.GetTilePos(tile, WorldObject, out _);
 			}
 		}
 
 		public void ExposeData()
 		{
-			Scribe_Values.Look(ref tile, "tile");
-			Scribe_Deep.Look(ref arrivalAction, "arrivalAction");
-			if (Scribe.mode == LoadSaveMode.PostLoadInit)
+			Scribe_Values.Look(ref tile, nameof(tile));
+			Scribe_Deep.Look(ref arrivalAction, nameof(arrivalAction));
+			if (Scribe.mode == LoadSaveMode.LoadingVars)
 			{
 				WorldObject = WorldHelper.WorldObjectAt(tile);
-				center = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
+				origin = WorldHelper.GetTilePos(tile, WorldObject, out spaceObject);
 			}
 		}
 	}

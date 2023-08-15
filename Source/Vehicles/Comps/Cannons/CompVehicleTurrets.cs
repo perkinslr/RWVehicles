@@ -9,27 +9,40 @@ using SmashTools;
 
 namespace Vehicles
 {
-	public class CompVehicleTurrets : VehicleAIComp
+	[HeaderTitle(Label = nameof(CompVehicleTurrets))]
+	public class CompVehicleTurrets : VehicleAIComp, IRefundable
 	{
 		/// PARAMS => (# Shots Fired, VehicleTurret, tickCount}
 		private List<TurretData> turretQueue = new List<TurretData>();
 
+		[TweakField]
 		public List<VehicleTurret> turrets = new List<VehicleTurret>();
 
-		public CompProperties_VehicleTurrets Props => (CompProperties_VehicleTurrets)props;
+		private List<VehicleTurret> tickers = new List<VehicleTurret>();
 
-		public VehiclePawn Vehicle => parent as VehiclePawn;
+		public CompProperties_VehicleTurrets Props => (CompProperties_VehicleTurrets)props;
 
 		public bool WeaponStatusOnline => !Vehicle.Downed && !Vehicle.Dead; //REDO - Add vehicle component health as check
 
 		public float MinRange => turrets.Max(x => x.turretDef.minRange);
+
+		public IEnumerable<(ThingDef thingDef, float count)> Refunds
+		{
+			get
+			{
+				foreach (VehicleTurret turret in turrets)
+				{
+					yield return (turret.loadedAmmo, turret.shellCount * turret.turretDef.chargePerAmmoCount);
+				}
+			}
+		}
 
 		public float MaxRangeGrouped
 		{
 			get
 			{
 				IEnumerable<VehicleTurret> cannonRange = turrets.Where(x => x.turretDef.maxRange <= GenRadial.MaxRadialPatternRadius);
-				if(!cannonRange.NotNullAndAny())
+				if (!cannonRange.NotNullAndAny())
 				{
 					return (float)Math.Floor(GenRadial.MaxRadialPatternRadius);
 				}
@@ -37,7 +50,7 @@ namespace Vehicles
 			}
 		}
 
-		public void AddCannons(List<VehicleTurret> cannonList)
+		public void AddTurrets(List<VehicleTurret> cannonList)
 		{
 			if (cannonList.NullOrEmpty())
 			{
@@ -51,7 +64,7 @@ namespace Vehicles
 			}
 		}
 
-		public void RemoveCannons(List<VehicleTurret> cannonList)
+		public void RemoveTurrets(List<VehicleTurret> cannonList)
 		{
 			if (cannonList.NullOrEmpty())
 			{
@@ -71,11 +84,23 @@ namespace Vehicles
 		public override void PostLoad()
 		{
 			turrets ??= new List<VehicleTurret>();
+			RecacheTurretPermissions();
 		}
 
 		public override void PostDraw()
 		{
-			turrets.ForEach(c => c.Draw());
+			for (int i = 0; i < turrets.Count; i++)
+			{
+				turrets[i].Draw();
+			}
+		}
+
+		public override void PostDrawUnspawned(Vector3 drawPos, float rotation)
+		{
+			for (int i = 0; i < turrets.Count; i++)
+			{
+				turrets[i].DrawAt(drawPos);
+			}
 		}
 
 		public override IEnumerable<Gizmo> CompGetGizmosExtra()
@@ -91,8 +116,9 @@ namespace Vehicles
 					{
 						if (turret.manualTargeting)
 						{
-							Command_TargeterCooldownAction turretCannons = new Command_TargeterCooldownAction
+							Command_TargeterCooldownAction turretTargeterGizmo = new Command_TargeterCooldownAction
 							{
+								vehicle = Vehicle,
 								turret = turret,
 								defaultLabel = !string.IsNullOrEmpty(turret.gizmoLabel) ? turret.gizmoLabel : $"{turret.turretDef.LabelCap} {turretNumber}",
 								icon = turret.GizmoIcon,
@@ -100,51 +126,40 @@ namespace Vehicles
 							};
 							if (!string.IsNullOrEmpty(turret.turretDef.gizmoDescription))
 							{
-								turretCannons.defaultDesc = turret.turretDef.gizmoDescription;
+								turretTargeterGizmo.defaultDesc = turret.turretDef.gizmoDescription;
 							}
-							turretCannons.targetingParams = new TargetingParameters
+							turretTargeterGizmo.targetingParams = new TargetingParameters
 							{
 								//Buildings, Things, Animals, Humans, and Mechs default to targetable
 								canTargetLocations = true
 							};
 							turretNumber++;
-							foreach (VehicleHandler relatedHandler in Vehicle.GetAllHandlersMatch(HandlingTypeFlags.Cannon, turret.key))
+							foreach (VehicleHandler relatedHandler in Vehicle.GetAllHandlersMatch(HandlingTypeFlags.Turret, turret.key))
 							{
-								if (relatedHandler.handlers.Count < relatedHandler.role.slotsToOperate && !DebugSettings.godMode)
+								if (relatedHandler.handlers.Count < relatedHandler.role.slotsToOperate && !VehicleMod.settings.debug.debugShootAnyTurret)
 								{
-									turretCannons.Disable("NotEnoughCannonCrew".Translate(Vehicle.LabelShort, relatedHandler.role.label));
+									turretTargeterGizmo.Disable("VF_NotEnoughCrew".Translate(Vehicle.LabelShort, relatedHandler.role.label));
 									break;
 								}
 							}
-							yield return turretCannons;
 							if (Vehicle.Faction != Faction.OfPlayer)
 							{
-								turretCannons.Disable("CannotOrderNonControlled".Translate());
+								turretTargeterGizmo.Disable("CannotOrderNonControlled".Translate());
 							}
-							//(bool enabled = turret.TurretEnabled(Vehicle.VehicleDef, TurretDisableType.Always);
-							//if (disabled)
-							//{
-							//	turretCannons.Disable(reason);
-							//}
+							if (turret.TurretRestricted)
+							{
+								turretTargeterGizmo.Disable(turret.restrictions.DisableReason);
+							}
+							yield return turretTargeterGizmo;
 						}
-						if (Prefs.DevMode)
+						if (Prefs.DevMode && DebugSettings.godMode)
 						{
 							yield return new Command_Action()
 							{
 								defaultLabel = $"Full Refill: {turret.gizmoLabel}",
 								action = delegate()
 								{
-									if (turret.turretDef.ammunition is null)
-									{
-										turret.ReloadCannon(null);
-									}
-									else if (turret.turretDef.ammunition.AllowedThingDefs.FirstOrDefault() is ThingDef thingDef)
-									{
-										Thing ammo = ThingMaker.MakeThing(thingDef);
-										ammo.stackCount = thingDef.stackLimit;
-										Vehicle.inventory.innerContainer.TryAddOrTransfer(ammo);
-										turret.ReloadCannon(thingDef);
-									}
+									DevModeReloadTurret(turret);
 								}
 							};
 						}
@@ -160,12 +175,13 @@ namespace Vehicles
 						{
 							turretCommand = new Command_CooldownAction()
 							{
-								turrets = new List<VehicleTurret>() { turret },
+								vehicle = Vehicle,
+								turret = turret,
 								defaultLabel = !string.IsNullOrEmpty(turret.gizmoLabel) ? turret.gizmoLabel : $"{turret.turretDef.LabelCap} {turretNumber}",
 								icon = turret.GizmoIcon,
 								iconDrawScale = turret.turretDef.gizmoIconScale
 							};
-							turretCommand.PostVariablesInit();
+							turretCommand.canReload = turrets.All(t => t.turretDef.ammunition != null);
 							turretNumber++;
 							newCommand = true;
 							if (!string.IsNullOrEmpty(turret.turretDef.gizmoDescription))
@@ -173,16 +189,12 @@ namespace Vehicles
 								turretCommand.defaultDesc = turret.turretDef.gizmoDescription;
 							}
 						}
-						else
-						{
-							turretCommand.turrets.Add(turret);
-						}
 						
-						foreach (VehicleHandler relatedHandler in Vehicle.GetAllHandlersMatch(HandlingTypeFlags.Cannon, turret.key))
+						foreach (VehicleHandler relatedHandler in Vehicle.GetAllHandlersMatch(HandlingTypeFlags.Turret, turret.key))
 						{
-							if(relatedHandler.handlers.Count < relatedHandler.role.slotsToOperate && !DebugSettings.godMode)
+							if (relatedHandler.handlers.Count < relatedHandler.role.slotsToOperate && !VehicleMod.settings.debug.debugShootAnyTurret)
 							{
-								turretCommand.Disable("NotEnoughCannonCrew".Translate(Vehicle.LabelShort, relatedHandler.role.label));
+								turretCommand.Disable("VF_NotEnoughCrew".Translate(Vehicle.LabelShort, relatedHandler.role.label));
 								break;
 							}
 						}
@@ -203,7 +215,7 @@ namespace Vehicles
 							{
 								gizmoGroups.Add(turret.groupKey, turretCommand);
 							}
-							if (Prefs.DevMode)
+							if (Prefs.DevMode && DebugSettings.godMode)
 							{
 								yield return new Command_Action()
 								{
@@ -218,7 +230,7 @@ namespace Vehicles
 										{
 											Thing ammo = ThingMaker.MakeThing(thingDef);
 											ammo.stackCount = thingDef.stackLimit;
-											Vehicle.inventory.innerContainer.TryAddOrTransfer(ammo);
+											Vehicle.AddOrTransfer(ammo);
 											turret.ReloadCannon(thingDef);
 										}
 									}
@@ -230,31 +242,51 @@ namespace Vehicles
 			}
 		}
 
+		public void QueueTicker(VehicleTurret turret)
+		{
+			if (!tickers.Contains(turret))
+			{
+				tickers.Add(turret);
+				StartTicking();
+			}
+		}
+
+		public void DequeueTicker(VehicleTurret turret)
+		{
+			tickers.Remove(turret);
+			if (tickers.Count == 0)
+			{
+				StopTicking();
+			}
+		}
+
 		public void QueueTurret(TurretData turretData)
 		{
 			turretData.turret.queuedToFire = true;
 			turretQueue.Add(turretData);
+			turretData.turret.EventRegistry[VehicleTurretEventDefOf.Queued].ExecuteEvents();
 		}
 
 		public void DequeueTurret(TurretData turretData)
 		{
 			turretData.turret.queuedToFire = false;
 			turretQueue.RemoveAll(td => td.turret == turretData.turret);
+			turretData.turret.EventRegistry[VehicleTurretEventDefOf.Dequeued].ExecuteEvents();
 		}
 
-		private void ResolveCannons()
+		private void ResolveTurretQueue()
 		{
-			if (turretQueue?.Count > 0)
+			for (int i = turretQueue.Count - 1; i >= 0; i--)
 			{
-				for (int i = 0; i < turretQueue.Count; i++)
+				TurretData turretData = turretQueue[i];
+				try
 				{
-					TurretData turretData = turretQueue[i];
-					if (!turretData.turret.cannonTarget.IsValid || (turretData.turret.shellCount <= 0 && !DebugSettings.godMode))
+					if (!turretData.turret.cannonTarget.IsValid || turretData.turret.shellCount <= 0)
 					{
 						DequeueTurret(turretData);
 						continue;
 					}
-					if (turretData.turret.OnCooldown || !turretData.turret.IsManned)
+					if (turretData.turret.TurretRestricted || turretData.turret.OnCooldown || (!turretData.turret.IsManned && !VehicleMod.settings.debug.debugShootAnyTurret))
 					{
 						turretData.turret.SetTarget(LocalTargetInfo.Invalid);
 						DequeueTurret(turretData);
@@ -289,16 +321,53 @@ namespace Vehicles
 					}
 					turretQueue[i] = turretData;
 				}
+				catch (Exception ex)
+				{
+					turretData.turret.SetTarget(LocalTargetInfo.Invalid);
+					DequeueTurret(turretData);
+					Log.Error($"Exception thrown while shooting turret {turretData.turret}. Removing from queue to resolve issue temporarily.\nException={ex}");
+				}
+			}
+		}
+
+		private void DevModeReloadTurret(VehicleTurret turret)
+		{
+			if (turret.turretDef.ammunition is null)
+			{
+				turret.ReloadCannon(null);
+			}
+			else if (turret.turretDef.ammunition.AllowedThingDefs.FirstOrDefault() is ThingDef thingDef)
+			{
+				Thing ammo = ThingMaker.MakeThing(thingDef);
+
+				//Limit to vehicle's cargo capacity to avoid stack limit mods from adding hundreds or thousands at a time
+				float capacity = Vehicle.GetStatValue(VehicleStatDefOf.CargoCapacity);
+				float massLeft = capacity - MassUtility.InventoryMass(Vehicle);
+				float thingMass = thingDef.GetStatValueAbstract(StatDefOf.Mass);
+				int countTillOverEncumbered = Mathf.CeilToInt(massLeft / thingMass);
+				ammo.stackCount = Mathf.Min(thingDef.stackLimit, countTillOverEncumbered);
+
+				Vehicle.AddOrTransfer(ammo);
+				turret.ReloadCannon(thingDef);
+			}
+			else
+			{
+				Log.Error($"Unable to reload {turret} through DevMode, no AllowedThingDefs in ammunition list.");
 			}
 		}
 
 		public override void CompTick()
 		{
 			base.CompTick();
-			ResolveCannons();
-			foreach (VehicleTurret turret in turrets)
+			ResolveTurretQueue();
+			//Only tick VehicleTurrets that actively request to be ticked
+			for (int i = tickers.Count - 1; i >= 0; i--)
 			{
-				turret.Tick();
+				VehicleTurret turret = tickers[i];
+				if (!turret.Tick())
+				{
+					DequeueTicker(turret);
+				}
 			}
 		}
 
@@ -318,18 +387,29 @@ namespace Vehicles
 			}
 		}
 
-		public override void PostGenerationSetup()
+		public override void PostGeneration()
 		{
-			base.PostGenerationSetup();
 			CreateTurretInstances();
-			RevalidateTurrets();
+		}
+
+		public override void EventRegistration()
+		{
+			Vehicle.AddEvent(VehicleEventDefOf.PawnEntered, RecacheTurretPermissions);
+			Vehicle.AddEvent(VehicleEventDefOf.PawnExited, RecacheTurretPermissions);
+			Vehicle.AddEvent(VehicleEventDefOf.PawnChangedSeats, RecacheTurretPermissions);
+			Vehicle.AddEvent(VehicleEventDefOf.PawnKilled, RecacheTurretPermissions);
+			Vehicle.AddEvent(VehicleEventDefOf.PawnCapacitiesDirty, RecacheTurretPermissions);
+			foreach (VehicleTurret turret in turrets)
+			{
+				turret.FillEvents_Def();
+			}
 		}
 
 		public static VehicleTurret CreateTurret(VehiclePawn vehicle, VehicleTurret reference)
 		{
 			VehicleTurret newTurret = (VehicleTurret)Activator.CreateInstance(reference.GetType(), new object[] { vehicle, reference });
 			newTurret.SetTarget(LocalTargetInfo.Invalid);
-			newTurret.ResetCannonAngle();
+			newTurret.ResetAngle();
 			return newTurret;
 		}
 
@@ -367,22 +447,63 @@ namespace Vehicles
 		{
 			foreach (VehicleTurret turret in turrets)
 			{
-				turret.childCannons = new List<VehicleTurret>();
-				foreach (VehicleTurret cannon2 in turrets.Where(c => c.parentKey == turret.key))
+				ResolveChildTurrets(turret);
+			}
+		}
+
+		public void ResolveChildTurrets(VehicleTurret turret)
+		{
+			turret.childTurrets = new List<VehicleTurret>();
+			if (!string.IsNullOrEmpty(turret.parentKey))
+			{
+				foreach (VehicleTurret parentTurret in turrets.Where(c => c.key == turret.parentKey))
 				{
-					cannon2.attachedTo = turret;
-					turret.childCannons.Add(cannon2);
+					turret.attachedTo = parentTurret;
+					if (parentTurret.attachedTo == turret || turret == parentTurret)
+					{
+						Log.Error($"Recursive turret attachments detected, this is not allowed. Disconnecting turret from parent.");
+						turret.attachedTo = null;
+					}
+					else
+					{
+						parentTurret.childTurrets.Add(turret);
+					}
 				}
 			}
 		}
 
 		public void InitTurrets()
 		{
-			foreach (VehicleTurret turretProps in Props.turrets)
+			for (int i = turrets.Count - 1; i >= 0; i--)
 			{
-				VehicleTurret matchingTurret = turrets.FirstOrDefault(turret => turret.key == turretProps.key);
-				matchingTurret.Init(turretProps);
+				VehicleTurret turret = turrets[i];
+				if (Props.turrets.FirstOrDefault(turretProps => turretProps.key == turret.key) is VehicleTurret turretProps)
+				{
+					turret.Init(turretProps);
+					ResolveChildTurrets(turret);
+					QueueTicker(turret); //Queue all turrets initially, will be sorted out after 1st tick
+				}
+				else
+				{
+					Log.Error($"Unable to find matching turret from save file to CompProperties based on key {turret.key}. Was this changed or removed?");
+					turrets.Remove(turret); //Remove from turret list, invalid turret will throw exceptions
+				}
 			}
+		}
+
+		public void RecacheTurretPermissions()
+		{
+			foreach (VehicleTurret turret in turrets)
+			{
+				turret.RecacheMannedStatus();
+			}
+		}
+
+		public override void PostSpawnSetup(bool respawningAfterLoad)
+		{
+			base.PostSpawnSetup(respawningAfterLoad);
+			RevalidateTurrets();
+			RecacheTurretPermissions();
 		}
 
 		public override void PostExposeData()
@@ -390,10 +511,6 @@ namespace Vehicles
 			base.PostExposeData();
 			Scribe_Collections.Look(ref turrets, nameof(turrets), LookMode.Deep, ctorArgs: Vehicle);
 			Scribe_Collections.Look(ref turretQueue, nameof(turretQueue), LookMode.Reference);
-			if (Scribe.mode == LoadSaveMode.PostLoadInit)
-			{
-				RevalidateTurrets();
-			}
 		}
 
 		public struct TurretData : IExposable

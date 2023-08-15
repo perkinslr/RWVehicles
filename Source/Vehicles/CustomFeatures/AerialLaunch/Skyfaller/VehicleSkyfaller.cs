@@ -5,16 +5,17 @@ using Verse;
 using Verse.Sound;
 using RimWorld;
 using UnityEngine;
+using SmashTools;
 
 namespace Vehicles
 {
-	//REDO - CACHE LAUNCH PROTOCOL
 	[StaticConstructorOnStartup]
-	public abstract class VehicleSkyfaller : Thing, IActiveDropPod, IThingHolder
+	public abstract class VehicleSkyfaller : Thing, IActiveDropPod, IThingHolder, ISustainerTarget
 	{
 		protected static MaterialPropertyBlock shadowPropertyBlock = new MaterialPropertyBlock();
 
 		public float angle;
+		protected Vector3 launchProtocolDrawPos;
 
 		protected Material cachedShadowMaterial;
 
@@ -24,9 +25,15 @@ namespace Vehicles
 
 		protected ActiveDropPodInfo contents;
 
-		protected Vector3 skyfallerLoc = Vector3.zero;
+		public override Vector3 DrawPos => launchProtocolDrawPos;
 
-		public override Vector3 DrawPos => skyfallerLoc == Vector3.zero ? base.DrawPos : skyfallerLoc;
+		protected Vector3 RootPos => vehicle.TrueCenter(Position, base.DrawPos.y);
+
+		public ThingWithComps Thing => vehicle;
+
+		public TargetInfo Target => this;
+
+		public MaintenanceType MaintenanceType => MaintenanceType.PerTick;
 
 		private Material ShadowMaterial
 		{
@@ -58,7 +65,11 @@ namespace Vehicles
 
 		public void GetChildHolders(List<IThingHolder> outChildren)
 		{
-			outChildren = vehicle.AllPawnsAboard.Cast<IThingHolder>().ToList();
+			if (outChildren == null)
+			{
+				return;
+			}
+			outChildren.AddRange(vehicle.handlers);
 		}
 
 		public ThingOwner GetDirectlyHeldThings()
@@ -69,10 +80,12 @@ namespace Vehicles
 		public override void Tick()
 		{
 			vehicle.CompVehicleLauncher.launchProtocol.Tick();
+			vehicle.Tick();
 		}
 
 		protected virtual void LeaveMap()
 		{
+			vehicle.ReleaseSustainerTarget();
 			Destroy();
 		}
 
@@ -83,6 +96,7 @@ namespace Vehicles
 			{
 				return;
 			}
+			//TODO - draw shadow at DrawPos but z-axis is left on ground and size decreases through curve
 			DrawDropSpotShadow(DrawPos, Rotation, shadowMaterial, def.skyfaller.shadowSize, vehicle.CompVehicleLauncher.launchProtocol.TicksPassed);
 		}
 
@@ -108,13 +122,20 @@ namespace Vehicles
 			Graphics.DrawMesh(MeshPool.plane10Back, matrix, material, 0, null, 0, shadowPropertyBlock);
 		}
 
+		public override void SpawnSetup(Map map, bool respawningAfterLoad)
+		{
+			base.SpawnSetup(map, respawningAfterLoad);
+			launchProtocolDrawPos = RootPos;
+			vehicle.SetSustainerTarget(this);
+			vehicle.ResetRenderStatus(); //Reset required for recaching handler lists. Loading save file will not recache these since vehicle will be despawned initially
+		}
+
 		public override void ExposeData()
 		{
 			base.ExposeData();
 			
 			Scribe_Values.Look(ref angle, "angle", 0f, false);
 			Scribe_References.Look(ref vehicle, "vehicle", true);
-			Scribe_Values.Look(ref skyfallerLoc, "skyfallerLoc");
 		}
 	}
 }

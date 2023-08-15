@@ -28,7 +28,11 @@ namespace Vehicles
 			{
 				if (aerialVehicle.flightPath.InRecon && aerialVehicle.flightPath.Last.tile == map.Tile)
 				{
-					return true;
+					return true; //Keep open while performing recon
+				}
+				if (aerialVehicle.arrivalAction != null && aerialVehicle.flightPath.Last.tile == map.Tile)
+				{
+					return true; //Keep open if aerial vehicle has active arrival action on tile
 				}
 			}
 			return false;
@@ -40,7 +44,7 @@ namespace Vehicles
 		/// <param name="cell"></param>
 		public static bool VehicleBlockedInPosition(VehiclePawn vehicle, Map map, IntVec3 cell, Rot4 rot)
 		{
-			IEnumerable<IntVec3> cells = vehicle.PawnOccupiedCells(cell, rot);
+			IEnumerable<IntVec3> cells = vehicle.PawnOccupiedCells(cell, rot);	
 			return VehicleReservationManager.AnyVehicleInhabitingCells(cells, map) || !vehicle.CellRectStandable(map, cell, rot);
 		}
 
@@ -55,39 +59,6 @@ namespace Vehicles
 		{
 			IEnumerable<IntVec3> cells = vehicle.PawnOccupiedCells(cell, rot);
 			return VehicleReservationManager.VehicleInhabitingCells(cells, map);
-		}
-
-		/// <summary>
-		/// Recon option for vehicle targeting
-		/// </summary>
-		/// <param name="vehicle"></param>
-		/// <param name="parent"></param>
-		public static FloatMenuOption ReconFloatMenuOption(VehiclePawn vehicle, MapParent parent)
-		{
-			if (parent.EnterCooldownBlocksEntering())
-			{
-				return new FloatMenuOption($"{"AerialReconSite".Translate(parent.Label)} ({"EnterCooldownBlocksEntering".Translate()})", null);
-			}
-			return new FloatMenuOption("AerialReconSite".Translate(parent.Label), delegate ()
-			{
-				if (vehicle.Spawned)
-				{
-					vehicle.CompVehicleLauncher.TryLaunch(parent.Tile, null, true);
-				}
-				else
-				{
-					AerialVehicleInFlight aerial = VehicleWorldObjectsHolder.Instance.AerialVehicleObject(vehicle);
-					if (aerial is null)
-					{
-						Log.Error($"Attempted to launch into existing map where CurrentMap is null and no AerialVehicle with {vehicle.Label} exists.");
-						return;
-					}
-					List<FlightNode> flightPath = new List<FlightNode>(LaunchTargeter.FlightPath);
-					aerial.OrderFlyToTiles(flightPath, aerial.DrawPos);
-					aerial.flightPath.ReconCircleAt(parent.Tile);
-					vehicle.CompVehicleLauncher.inFlight = true;
-				}
-			});
 		}
 
 		/// <summary>

@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using RimWorld;
 using Verse;
@@ -7,36 +8,20 @@ using SmashTools;
 
 namespace Vehicles
 {
-	public class JobDriver_RepairVehicle : JobDriver
+	public class JobDriver_RepairVehicle : VehicleJobDriver
 	{
 		private const float TicksForRepair = 60;
 
 		protected float ticksToNextRepair;
 
-		public VehiclePawn Vehicle
-		{
-			get
-			{
-				if(job.targetA.Thing is VehiclePawn vehicle)
-				{
-					return vehicle;
-				}
-				Log.Error("Attempting to repair non-vehicle pawn.");
-				return null;
-			}
-		}
-
-		public override bool TryMakePreToilReservations(bool errorOnFailed)
-		{
-			int maxWorkers = Vehicle.TotalAllowedFor(JobDefOf_Vehicles.UpgradeVehicle);
-			LocalTargetInfo target = Vehicle.SurroundingCells.FirstOrDefault(c => pawn.Map.GetCachedMapComponent<VehicleReservationManager>().CanReserve<LocalTargetInfo, VehicleTargetReservation>(Vehicle, pawn, c));
-			return target.IsValid && pawn.Map.GetCachedMapComponent<VehicleReservationManager>().Reserve<LocalTargetInfo, VehicleTargetReservation>(Vehicle, pawn, job, target, maxWorkers);
-		}
+		protected override JobDef JobDef => JobDefOf_Vehicles.RepairVehicle;
 
 		protected override IEnumerable<Toil> MakeNewToils()
 		{
 			this.FailOnDespawnedNullOrForbidden(TargetIndex.A);
-			yield return Toils_Goto.GotoThing(TargetIndex.A, PathEndMode.Touch);
+			Toil gotoCell = Toils_Goto.GotoCell(TargetIndex.B, PathEndMode.OnCell);
+			gotoCell.FailOnMoving(TargetIndex.A);
+			yield return gotoCell;
 			Toil repair = new Toil
 			{
 				initAction = delegate ()
@@ -47,7 +32,7 @@ namespace Vehicles
 			repair.tickAction = delegate ()
 			{
 				Pawn actor = repair.actor;
-				actor.skills.Learn(SkillDefOf.Construction, 0.08f, false);
+				actor.skills?.Learn(SkillDefOf.Construction, 0.08f, false);
 				float statValue = actor.GetStatValue(StatDefOf.ConstructionSpeed, true);
 				ticksToNextRepair -= statValue;
 				if (ticksToNextRepair <= 0f)
@@ -62,13 +47,15 @@ namespace Vehicles
 					ticksToNextRepair = TicksForRepair;
 					var component = Vehicle.statHandler.ComponentsPrioritized.FirstOrDefault(c => c.HealthPercent < 1);
 					component.HealComponent(Vehicle.GetStatValue(VehicleStatDefOf.RepairRate));
+					Vehicle.CrashLanded = false;
 				}
 			};
+			repair.FailOnMoving(TargetIndex.A);
 			repair.FailOnCannotTouch(TargetIndex.A, PathEndMode.Touch);
-			repair.WithEffect(TargetThingA.def.repairEffect, TargetIndex.A);
+			repair.WithEffect(Vehicle.def.repairEffect, TargetIndex.A);
 			repair.defaultCompleteMode = ToilCompleteMode.Delay;
 			repair.defaultDuration = 2000;
-			repair.activeSkill = (() => SkillDefOf.Construction);
+			repair.activeSkill = () => SkillDefOf.Construction;
 			yield return repair;
 		}
 	}

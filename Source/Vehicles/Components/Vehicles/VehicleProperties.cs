@@ -8,72 +8,65 @@ using SmashTools;
 
 namespace Vehicles
 {
-	[HeaderTitle(Label = "VehicleProperties", Translate = true)]
+	[HeaderTitle(Label = "VF_Properties", Translate = true)]
 	public class VehicleProperties
 	{
-		[PostToSettings(Label = "VehicleVisibilityWorldMap", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
-		[SliderValues(MinValue = 0, MaxValue = 1, MinValueDisplay = "Invisible", MaxValueDisplay = "FullyVisible", RoundDecimalPlaces = 1)]
-		public float visibility = 2.5f;
-
-		[PostToSettings(Label = "VehicleFishingEnabled", Translate = true, UISettingsType = UISettingsType.Checkbox, VehicleType = VehicleType.Sea)]
+		[PostToSettings(Label = "VF_FishingEnabled", Tooltip = "VF_FishingEnabledTooltip", Translate = true, UISettingsType = UISettingsType.Checkbox, VehicleType = VehicleType.Sea)]
+		[DisableSettingConditional(MayRequireAny = new string[] { CompatibilityPackageIds.VE_Fishing })]
 		public bool fishing = false;
-		public float wakeMultiplier = 1.6f;
-		public float wakeSpeed = 1.6f;
 
-		public List<VehicleJobLimitations> vehicleJobLimitations = new List<VehicleJobLimitations>()
-		{
-			new VehicleJobLimitations("RepairVehicle", 1),
-			new VehicleJobLimitations("LoadUpgradeMaterials", 1),
-			new VehicleJobLimitations("UpgradeVehicle", 1),
-		};
+		public VehicleTrack track;
 
-		public Dictionary<VehicleEventDef, SoundDef> soundOneShotsOnEvent = new Dictionary<VehicleEventDef, SoundDef>();
-		//<Start Sustainer, Stop Sustainer>
-		public Dictionary<Pair<VehicleEventDef, VehicleEventDef>, SoundDef> soundSustainersOnEvent = new Dictionary<Pair<VehicleEventDef, VehicleEventDef>, SoundDef>();
+		[PostToSettings(Label = "VF_CollisionMultiplier", Tooltip = "VF_CollisionMultiplierTooltip", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
+		[SliderValues(MinValue = 0, MaxValue = 2, Increment = 0.05f, RoundDecimalPlaces = 2)]
+		public float pawnCollisionMultiplier = 0.5f;
+		[PostToSettings(Label = "VF_CollisionVehicleMultiplier", Tooltip = "VF_CollisionVehicleMultiplierTooltip", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
+		[SliderValues(MinValue = 0, MaxValue = 2, Increment = 0.05f, RoundDecimalPlaces = 2)]
+		public float pawnCollisionRecoilMultiplier = 0.5f;
+
+		public List<VehicleJobLimitations> vehicleJobLimitations = new List<VehicleJobLimitations>();
 
 		public bool diagonalRotation = true;
-		[PostToSettings(Label = "ManhunterTargetsVehicle", Tooltip = "ManhunterTargetsVehicleTooltip", Translate = true, UISettingsType = UISettingsType.Checkbox)]
+		[PostToSettings(Label = "VF_ManhunterTargetsVehicle", Tooltip = "VF_ManhunterTargetsVehicleTooltip", Translate = true, UISettingsType = UISettingsType.Checkbox)]
 		public bool manhunterTargetsVehicle = false;
-
-		public string healthLabel_Healthy = "MissingHealthyLabel";
-		public string healthLabel_Injured = "MissingInjuredLabel";
-		public string healthLabel_Immobile = "MissingImmobileLabel";
-		public string healthLabel_Dead = "MissingDeadLabel";
-		public string healthLabel_Beached = "MissingBeachedLabel";
 
 		public string iconTexPath;
 		public bool generateThingIcon = true;
 
 		//---------------   Pathing   ---------------
+
 		public bool defaultTerrainImpassable = false;
-		public int pathTurnCost = 10;
-
-		/// <summary>
-		/// Do not use snow costs to try and set impassable terrain based on snow depth. It is not designed for that, and if it was it would lag
-		/// </summary>
-		public Dictionary<SnowCategory, int> customSnowCosts;
-		/// <summary>
-		/// Set to -1 or >= to 10000 for impassable terrain
-		/// </summary>
-		public Dictionary<TerrainDef, int> customTerrainCosts;
-		/// <summary>
-		/// Set to -1 or >= to 10000 for impassable thing
-		/// </summary>
-		public Dictionary<ThingDef, int> customThingCosts;
-
 		public bool defaultBiomesImpassable = false;
-		public Dictionary<RiverDef, float> customRiverCosts = new Dictionary<RiverDef, float>();
-		public Dictionary<BiomeDef, float> customBiomeCosts = new Dictionary<BiomeDef, float>();
-		public Dictionary<Hilliness, float> customHillinessCosts = new Dictionary<Hilliness, float>();
-		public Dictionary<RoadDef, float> customRoadCosts = new Dictionary<RoadDef, float>();
+
+		// Local Pathing
+		/// <summary>
+		/// Additional tick cost for snow, clamped between 0 and 450 ticks.
+		/// </summary>
+		public SimpleDictionary<SnowCategory, int> customSnowCategoryTicks;
+		/// <summary>
+		/// Set to 10000 for impassable terrain
+		/// </summary>
+		public SimpleDictionary<TerrainDef, int> customTerrainCosts;
+		/// <summary>
+		/// Set to 10000 for impassable thing
+		/// </summary>
+		public SimpleDictionary<ThingDef, int> customThingCosts;
+
+		// World Pathing
+		public float offRoadMultiplier = 1;
+		public SimpleDictionary<RiverDef, float> customRiverCosts = new SimpleDictionary<RiverDef, float>();
+		public SimpleDictionary<BiomeDef, float> customBiomeCosts = new SimpleDictionary<BiomeDef, float>();
+		public SimpleDictionary<Hilliness, float> customHillinessCosts = new SimpleDictionary<Hilliness, float>();
+		public SimpleDictionary<RoadDef, float> customRoadCosts = new SimpleDictionary<RoadDef, float>();
+
 		//-------------------------------------------
 
-		[PostToSettings(Label = "VehicleWinterCostMultiplier", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
+		[PostToSettings(Label = "VF_WinterSpeedMultiplier", Tooltip = "VF_WinterSpeedMultiplierTooltip", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
 		[SliderValues(MinValue = 0, MaxValue = 10, RoundDecimalPlaces = 1)]
-		public float winterPathCostMultiplier = 2.5f;
-		[PostToSettings(Label = "VehicleWorldSpeedMultiplier", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
+		public float winterSpeedMultiplier = 2.5f;
+		[PostToSettings(Label = "VF_WorldSpeedMultiplier", Tooltip = "VF_WorldSpeedMultiplierTooltip", Translate = true, UISettingsType = UISettingsType.SliderFloat)]
 		[SliderValues(MinValue = 0, MaxValue = 10, RoundDecimalPlaces = 1)]
-		public float worldSpeedMultiplier = 1;
+		public float worldSpeedMultiplier = 2.5f;
 
 		public List<FactionDef> restrictToFactions;
 
@@ -82,29 +75,28 @@ namespace Vehicles
 
 		public IEnumerable<string> ConfigErrors()
 		{
-			if (vehicleJobLimitations.NullOrEmpty())
-			{
-				yield return "<field>vehicleJobLimitations</field> list must be populated".ConvertRichText();
-			}
+			yield break;
 		}
 
 		public void ResolveReferences(VehicleDef vehicleDef)
 		{
-			customBiomeCosts ??= new Dictionary<BiomeDef, float>();
-			customHillinessCosts ??= new Dictionary<Hilliness, float>();
-			customRoadCosts ??= new Dictionary<RoadDef, float>();
-			customTerrainCosts ??= new Dictionary<TerrainDef, int>();
-			customThingCosts ??= new Dictionary<ThingDef, int>();
-			customSnowCosts ??= new Dictionary<SnowCategory, int>();
+			vehicleJobLimitations ??= new List<VehicleJobLimitations>();
 
+			customBiomeCosts ??= new SimpleDictionary<BiomeDef, float>();
+			customHillinessCosts ??= new SimpleDictionary<Hilliness, float>();
+			customRoadCosts ??= new SimpleDictionary<RoadDef, float>();
+			customTerrainCosts ??= new SimpleDictionary<TerrainDef, int>();
+			customThingCosts ??= new SimpleDictionary<ThingDef, int>();
+			customSnowCategoryTicks ??= new SimpleDictionary<SnowCategory, int>();
+			
 			roles.OrderBy(c => c.hitbox.side == VehicleComponentPosition.BodyNoOverlap).ForEach(c => c.hitbox.Initialize(vehicleDef));
 		}
 
-		public void PostVehicleDefLoad(VehicleDef vehicleDef)
+		public void PostDefDatabase(VehicleDef vehicleDef)
 		{
 			string defName = vehicleDef.defName;
 
-			XmlHelper.FillDefaults_Enum(defName, nameof(customSnowCosts), customSnowCosts);
+			XmlHelper.FillDefaults_Enum(defName, nameof(customSnowCategoryTicks), customSnowCategoryTicks);
 			XmlHelper.FillDefaults_Def(defName, nameof(customTerrainCosts), customTerrainCosts);
 			XmlHelper.FillDefaults_Def(defName, nameof(customThingCosts), customThingCosts);
 

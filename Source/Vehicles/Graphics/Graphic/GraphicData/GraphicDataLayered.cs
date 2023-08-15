@@ -23,11 +23,12 @@ namespace Vehicles
 			layer = graphicData.layer;
 		}
 
-		public virtual void PreInit()
+		public virtual void Init()
 		{
 			OriginalDrawOffset ??= drawOffset;
 			drawOffset = OriginalDrawOffset.Value;
-			drawOffset.y += layer * (Altitudes.AltInc / Enum.GetNames(typeof(AltitudeLayer)).EnumerableCount());
+			float layerOffset = layer * (Altitudes.AltInc / Enum.GetNames(typeof(AltitudeLayer)).EnumerableCount());
+			drawOffset.y += layerOffset;
 		}
 	}
 }

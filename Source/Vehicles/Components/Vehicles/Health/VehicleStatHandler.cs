@@ -13,39 +13,71 @@ namespace Vehicles
 	{
 		private const int TicksHighlighted = 100;
 
-		private VehiclePawn vehicle;
-		public List<VehicleComponent> components = new List<VehicleComponent>();
-		private readonly Dictionary<IntVec2, List<VehicleComponent>> componentLocations = new Dictionary<IntVec2, List<VehicleComponent>>();
-		public readonly Dictionary<VehicleStatDef, List<VehicleComponent>> statComponents = new Dictionary<VehicleStatDef, List<VehicleComponent>>();
+		private const float ChanceDirectHit = 1.25f;
+		private const float ChanceFallthroughHit = 1;
+		private const float ChanceMinorDeflectHit = 0.75f;
+		private const float ChanceMajorDeflectHit = 0.75f;
 
+		//Debugging only
 		private readonly List<Pair<IntVec2, int>> debugCellHighlight = new List<Pair<IntVec2, int>>();
 
-		public Dictionary<Thing, IntVec3> impacter = new Dictionary<Thing, IntVec3>();
+		//Caching lookup
+		private readonly Dictionary<IntVec2, List<VehicleComponent>> componentLocations = new Dictionary<IntVec2, List<VehicleComponent>>();
+		private readonly Dictionary<VehicleStatDef, List<VehicleComponent>> statComponents = new Dictionary<VehicleStatDef, List<VehicleComponent>>();
 
+		//Caching values
+		private readonly StatCache statCache;
+
+		//Registry
+		private readonly Dictionary<Thing, IntVec3> impacter = new Dictionary<Thing, IntVec3>();
+		public List<VehicleComponent> components = new List<VehicleComponent>();
+
+		private VehiclePawn vehicle;
+		
 		public VehicleStatHandler(VehiclePawn vehicle)
 		{
 			this.vehicle = vehicle;
+			statCache = new StatCache(vehicle);
 			components = new List<VehicleComponent>();
 			statComponents = new Dictionary<VehicleStatDef, List<VehicleComponent>>();
 			debugCellHighlight = new List<Pair<IntVec2, int>>();
 			componentLocations = new Dictionary<IntVec2, List<VehicleComponent>>();
 		}
 
-		public List<VehicleComponent> ComponentsPrioritized => components.OrderBy(c => !c.props.categories.NullOrEmpty() ? c.props.categories.Min(ctg => ctg.priority) : 999).ThenBy(c => c.HealthPercent).ToList();
+		public List<VehicleComponent> ComponentsPrioritized => components.OrderBy(c => !c.props.categories.NullOrEmpty() ? c.props.categories.Min(ctg => ctg.displayPriorityInCategory) : 9999).ThenBy(c => c.HealthPercent).ToList();
 
 		public bool NeedsRepairs => components.Any(c => c.HealthPercent < 1);
+
+		public float HealthPercent { get; private set; }
 
 		public void InitializeComponents()
 		{
 			components.Clear();
+			statComponents.Clear();
 			foreach (VehicleComponentProperties props in vehicle.VehicleDef.components)
 			{
-				VehicleComponent component = (VehicleComponent)Activator.CreateInstance(props.compClass);
+				VehicleComponent component = (VehicleComponent)Activator.CreateInstance(props.compClass, vehicle);
 				components.Add(component);
 				component.Initialize(props);
 				component.PostCreate();
 				RecacheStatCategories(component);
 			}
+		}
+
+		public float GetStatValue(VehicleStatDef statDef)
+		{
+			return statCache[statDef];
+		}
+
+		public void MarkStatDirty(VehicleStatDef statDef)
+		{
+			statCache.MarkDirty(statDef);
+		}
+
+		public void MarkAllDirty()
+		{
+			statCache.Reset();
+			vehicle.statHandler.RecalculateHealthPercent();
 		}
 
 		private void RecacheStatCategories(VehicleComponent comp)
@@ -60,7 +92,7 @@ namespace Vehicles
 					}
 					else
 					{
-						statComponents.Add(category, new List<VehicleComponent>() { comp });
+						statComponents[category] = new List<VehicleComponent>() { comp };
 					}
 				}
 			}
@@ -70,17 +102,33 @@ namespace Vehicles
 		/// <returns>% efficiency of <paramref name="statDef"/> given <see cref="VehicleComponent"/> calculation.</returns>
 		public float StatEfficiency(VehicleStatDef statDef)
 		{
-			if (statComponents.TryGetValue(statDef, out var categories))
+			if (statComponents.TryGetValue(statDef, out var components))
 			{
-				return statDef.operationType switch
+				float efficiency = EfficiencyFor(statDef.operationType, components);
+				float priorityEfficiency = EfficiencyFor(statDef.operationType, components.Where(component => component.props.priorityStatEfficiency));
+				if (priorityEfficiency < efficiency)
 				{
-					EfficiencyOperationType.MinValue => categories.Min(c => c.Efficiency),
-					EfficiencyOperationType.MaxValue => categories.Max(c => c.Efficiency),
-					EfficiencyOperationType.Sum => categories.Sum(c => c.Efficiency).Clamp(0, 1),
-					_ => categories.AverageWeighted(c => c.props.efficiencyWeight, c => c.Efficiency) //Everything else falls through to Average case
-				};
+					return priorityEfficiency;
+				}
+				return efficiency;
 			}
 			return 1;
+		}
+
+		private float EfficiencyFor(EfficiencyOperationType operationType, IEnumerable<VehicleComponent> components)
+		{
+			if (components.EnumerableNullOrEmpty())
+			{
+				return 1;
+			}
+			return operationType switch
+			{
+				EfficiencyOperationType.None => 1,
+				EfficiencyOperationType.MinValue => components.Min(c => c.Efficiency),
+				EfficiencyOperationType.MaxValue => components.Max(c => c.Efficiency),
+				EfficiencyOperationType.Sum => components.Sum(c => c.Efficiency).Clamp(0, 1),
+				_ => components.AverageWeighted(c => c.props.efficiencyWeight, c => c.Efficiency) //Everything else falls through to Average case
+			};
 		}
 
 		public void InitializeHitboxCells()
@@ -113,14 +161,28 @@ namespace Vehicles
 			}
 		}
 
-		public void RegisterImpacter(Thing launcher, IntVec3 cell)
+		/// <summary>
+		/// Registers instigator to specific cell so that damage can be applied to the vehicle components belonging to that area of the hitbox.
+		/// </summary>
+		/// <remarks>The instigator is immediately deregistered upon dealing damage to make way for multiple damage instances from the same instigator (won't conflict with synchronous operations)</remarks>
+		/// <param name="thing"></param>
+		/// <param name="cell"></param>
+		public void RegisterImpacter(Thing thing, IntVec3 cell)
 		{
 			CellRect occupiedRect = vehicle.OccupiedRect();
 			if (!occupiedRect.Contains(cell))
 			{
 				cell = occupiedRect.MinBy(c => Ext_Map.Distance(c, cell));
 			}
-			impacter[launcher] = cell;
+			impacter[thing] = cell;
+		}
+
+		public void DeregisterImpacter(Thing thing)
+		{
+			if (thing != null)
+			{
+				impacter.Remove(thing);
+			}
 		}
 
 		private IntVec2 AdjustFromVehiclePosition(IntVec2 cell)
@@ -156,9 +218,14 @@ namespace Vehicles
 			return hitCell;
 		}
 
-		public void TakeDamage(DamageInfo dinfo, bool explosive = false)
+		public void RecalculateHealthPercent()
 		{
-			if (!impacter.TryGetValue(dinfo.Instigator, out IntVec3 cell))
+			HealthPercent = components.Average(component => component.HealthPercent);
+		}
+
+		public void TakeDamage(DamageInfo dinfo)
+		{
+			if (dinfo.Instigator is null || !impacter.TryGetValue(dinfo.Instigator, out IntVec3 cell))
 			{
 				if (dinfo.Instigator != null)
 				{
@@ -170,227 +237,212 @@ namespace Vehicles
 				}
 			}
 			IntVec2 hitCell = AdjustFromVehiclePosition(cell.ToIntVec2);
-			TakeDamage(dinfo, hitCell, explosive);
+			TakeDamage(dinfo, hitCell);
 		}
 
-		public void TakeDamage(DamageInfo dinfo, IntVec2 hitCell, bool explosive = false)
+		public void TakeDamage(DamageInfo dinfo, IntVec2 hitCell)
 		{
 			StringBuilder report = VehicleMod.settings.debug.debugLogging ? new StringBuilder() : null;
 
-			ApplyDamageToComponent(dinfo, hitCell, explosive, report);
-
-			if (dinfo.Instigator != null)
-			{
-				impacter.Remove(dinfo.Instigator);
-			}
-
+			ApplyDamageToComponent(dinfo, hitCell, report);
+			vehicle.Notify_TookDamage();
+			DeregisterImpacter(dinfo.Instigator);
 			Debug.Message(report.ToStringSafe());
-
-			if (vehicle.GetStatValue(VehicleStatDefOf.MoveSpeed) <= 0.1f)
-			{
-				vehicle.drafter.Drafted = false;
-			}
-
-			if (vehicle.Spawned && (vehicle.GetStatValue(VehicleStatDefOf.BodyIntegrity) <= 0 || components.All(c => c.health <= 0)))
-			{
-				vehicle.Kill(dinfo);
-			}
 		}
 
-		private void ApplyDamageToComponent(DamageInfo dinfo, IntVec2 hitCell, bool explosive = false, StringBuilder report = null)
+		private void ApplyDamageToComponent(DamageInfo dinfo, IntVec2 hitCell, StringBuilder report = null)
 		{
 			DamageDef defApplied = dinfo.Def;
 			float damage = dinfo.Amount;
 
-			report?.AppendLine("-- DAMAGE REPORT --");
-			report?.AppendLine($"Base Damage: {damage}");
-			report?.AppendLine($"HitCell: {hitCell}");
+			if (defApplied.Worker is DamageWorker_Extinguish)
+			{
+				damage = 0; //Vanilla has extinguish set to 999,999 damage that only applies to fire.  Apply 0 damage to vehicles
+			}
+			try
+			{
+				report?.AppendLine("-- DAMAGE REPORT --");
+				report?.AppendLine($"Base Damage: {damage}");
+				report?.AppendLine($"HitCell: {hitCell}");
 
-			if (dinfo.Weapon?.GetModExtension<VehicleDamageMultiplierDefModExtension>() is VehicleDamageMultiplierDefModExtension weaponMultiplier)
-			{
-				damage *= weaponMultiplier.multiplier;
-				report?.AppendLine($"ModExtension Multiplier: {weaponMultiplier.multiplier} Result: {damage}");
-			}
+				if (dinfo.Weapon?.GetModExtension<VehicleDamageMultiplierDefModExtension>() is VehicleDamageMultiplierDefModExtension weaponMultiplier)
+				{
+					damage *= weaponMultiplier.multiplier;
+					report?.AppendLine($"ModExtension Multiplier: {weaponMultiplier.multiplier} Result: {damage}");
+				}
 
-			if (dinfo.Instigator?.def.GetModExtension<VehicleDamageMultiplierDefModExtension>() is VehicleDamageMultiplierDefModExtension defMultiplier)
-			{
-				damage *= defMultiplier.multiplier;
-				report?.AppendLine($"ModExtension Multiplier: {defMultiplier.multiplier} Result: {damage}");
-			}
+				if (dinfo.Instigator?.def.GetModExtension<VehicleDamageMultiplierDefModExtension>() is VehicleDamageMultiplierDefModExtension defMultiplier)
+				{
+					damage *= defMultiplier.multiplier;
+					report?.AppendLine($"ModExtension Multiplier: {defMultiplier.multiplier} Result: {damage}");
+				}
 
-			if (dinfo.Def.isRanged)
-			{
-				damage *= VehicleMod.settings.main.rangedDamageMultiplier;
-				report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.rangedDamageMultiplier} Result: {damage}");
-			}
-			else if (dinfo.Def.isExplosive)
-			{
-				damage *= VehicleMod.settings.main.explosiveDamageMultiplier;
-				report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.explosiveDamageMultiplier} Result: {damage}");
-			}
-			else
-			{
-				damage *= VehicleMod.settings.main.meleeDamageMultiplier;
-				report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.meleeDamageMultiplier} Result: {damage}");
-			}
+				if (dinfo.Def.isRanged)
+				{
+					damage *= VehicleMod.settings.main.rangedDamageMultiplier;
+					report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.rangedDamageMultiplier} Result: {damage}");
+				}
+				else if (dinfo.Def.isExplosive)
+				{
+					damage *= VehicleMod.settings.main.explosiveDamageMultiplier;
+					report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.explosiveDamageMultiplier} Result: {damage}");
+				}
+				else
+				{
+					damage *= VehicleMod.settings.main.meleeDamageMultiplier;
+					report?.AppendLine($"Settings Multiplier: {VehicleMod.settings.main.meleeDamageMultiplier} Result: {damage}");
+				}
 
-			if (damage <= 0)
-			{
-				report?.AppendLine($"Final Damage = {damage}. Exiting.");
-				return;
-			}
-			vehicle.EventRegistry[VehicleEventDefOf.DamageTaken].ExecuteEvents();
-			if (explosive)
-			{
-				IntVec2 cell = new IntVec2(hitCell.x, hitCell.z);
+				if (damage <= 0)
+				{
+					report?.AppendLine($"Final Damage = {damage}. Exiting.");
+					return;
+				}
+				dinfo.SetAmount(damage);
 				Rot4 direction = DirectionFromAngle(dinfo.Angle);
+				VehicleComponent.VehiclePartDepth hitDepth = VehicleComponent.VehiclePartDepth.External;
 				for (int i = 0; i < Mathf.Max(vehicle.VehicleDef.Size.x, vehicle.VehicleDef.Size.z); i++)
 				{
-					float lastDamage = 0;
-					IntVec2 cellOffset = cell;
-					for (int e = 0, seq = 0; e < 1 + i * 2; seq += e % 2 == 0 ? 1 : 0, e++)
+					if (!vehicle.Spawned || dinfo.Amount <= 0)
 					{
-						int seqAlt = e % 2 == 0 ? seq : -seq;
-						float stepDamage = damage / (1 + i * 2);
-						if (direction.IsHorizontal)
+						return;
+					}
+					VehicleComponent component = null;
+					report?.AppendLine($"Damaging = {hitCell}");
+					if (componentLocations.TryGetValue(hitCell, out List<VehicleComponent> components))
+					{
+						report?.AppendLine($"components=({string.Join(",", components.Select(c => c.props.label))})");
+						report?.AppendLine($"hitDepth = {hitDepth}");
+						//If no components at hit cell, fallthrough to internal
+						if (!components.Where(comp => comp.props.depth == hitDepth && comp.HealthPercent > 0).TryRandomElementByWeight((component) => component.props.hitWeight, out component))
 						{
-							cellOffset.z = seqAlt;
+							report?.AppendLine($"No components found. Hitting internal parts.");
+							hitDepth = VehicleComponent.VehiclePartDepth.Internal;
+							//If depth = internal then pick random internal component even if it does not have a hitbox
+							component = this.components.Where(comp => comp.props.depth == hitDepth && comp.HealthPercent > 0).RandomElementByWeightWithFallback((component) => component.props.hitWeight);
+							//If no internal components, pick random component w/ health
+							component ??= this.components.Where(comp => comp.HealthPercent > 0).RandomElementByWeightWithFallback((component) => component.props.hitWeight);
+							if (component is null)
+							{
+								return;
+							}
 						}
 						else
 						{
-							cellOffset.x = seqAlt;
-						}
-						VehicleComponent component = componentLocations.TryGetValue(cellOffset, componentLocations[new IntVec2(0, 0)]).Where(c => c.HealthPercent > 0).RandomElementWithFallback();
-						if (component is null)
-						{
-							continue;
-						}
-						if (!cell.IsValid)
-						{
-							break;
-						}
-						if (VehicleMod.settings.debug.debugDrawHitbox)
-						{
-							debugCellHighlight.Add(new Pair<IntVec2, int>(new IntVec2(cellOffset.x, cellOffset.z), TicksHighlighted));
-						}
-						dinfo.SetAmount(stepDamage);
-						DamageRoles(dinfo, cellOffset);
-						lastDamage = component.TakeDamage(vehicle, dinfo, new IntVec3(vehicle.Position.x + hitCell.x, 0, vehicle.Position.z + hitCell.z));
-						if (vehicle.Spawned && Rand.Range(0, 1) < component.props.explosionProperties.chance)
-						{
-							GenExplosion.DoExplosion(new IntVec3(vehicle.Position.x + cellOffset.x, 0, vehicle.Position.z + cellOffset.z), vehicle.Map, component.props.explosionProperties.radius, component.props.explosionProperties.Def, dinfo.Instigator,
-								component.props.explosionProperties.Def.defaultDamage, component.props.explosionProperties.Def.defaultArmorPenetration);
-						}
-					}
-					damage = lastDamage;
-					if (damage > 0 && direction.IsValid)
-					{
-						switch (direction.AsInt)
-						{
-							case 0:
-								cell.z += 1;
-								break;
-							case 1:
-								cell.x += 1;
-								break;
-							case 2:
-								cell.z -= 1;
-								break;
-							case 3:
-								cell.x -= 1;
-								break;
+							report?.AppendLine($"Found {component} at {hitCell}");
 						}
 					}
 					else
 					{
-						break;
-					}
-				}
-			}
-			else
-			{
-				IntVec2 cell = hitCell;
-				Rot4 direction = DirectionFromAngle(dinfo.Angle);
-				for (int i = 0; i < Mathf.Max(vehicle.VehicleDef.Size.x, vehicle.VehicleDef.Size.z); i++)
-				{
-					VehicleComponent component = componentLocations.TryGetValue(cell, componentLocations[IntVec2.Zero]).Where(c => c.HealthPercent > 0).RandomElementWithFallback();
-					if (component is null)
-					{
-						if (damage > 0 && direction.IsValid)
+						report?.AppendLine($"No components found. Hitting internal parts.");
+						hitDepth = VehicleComponent.VehiclePartDepth.Internal;
+						//If depth = internal then pick random internal component even if it does not have a hitbox
+						component = this.components.Where(comp => comp.props.depth == hitDepth && comp.HealthPercent > 0).RandomElementByWeightWithFallback((component) => component.props.hitWeight);
+						//If no internal components, pick random component w/ health
+						component ??= this.components.Where(comp => comp.HealthPercent > 0).RandomElementByWeightWithFallback((component) => component.props.hitWeight);
+						if (component is null)
 						{
-							switch (direction.AsInt)
-							{
-								case 0:
-									cell.z += 1;
-									break;
-								case 1:
-									cell.x += 1;
-									break;
-								case 2:
-									cell.z -= 1;
-									break;
-								case 3:
-									cell.x -= 1;
-									break;
-							}
+							return;
 						}
-						continue;
 					}
-					if (!cell.IsValid)
+					if (!hitCell.IsValid)
 					{
 						break;
 					}
 					if (VehicleMod.settings.debug.debugDrawHitbox)
 					{
-						debugCellHighlight.Add(new Pair<IntVec2, int>(new IntVec2(cell.x, cell.z), TicksHighlighted));
+						debugCellHighlight.Add(new Pair<IntVec2, int>(hitCell, TicksHighlighted));
 					}
-					dinfo.SetAmount(damage);
-					report?.AppendLine($"Applying Damage = {damage} to {component.props.key}");
-					DamageRoles(dinfo, cell);
-					damage = component.TakeDamage(vehicle, dinfo, new IntVec3(vehicle.Position.x + hitCell.x, 0, vehicle.Position.z + hitCell.z));
-					report?.AppendLine($"Recycled Damage = {damage}");
-					if (vehicle.Spawned && Rand.Range(0, 1) < component.props.explosionProperties.chance)
+					report?.AppendLine($"Damaging {hitCell}");
+					if (HitPawn(dinfo, hitDepth, hitCell, direction, out Pawn hitPawn))
 					{
-						GenExplosion.DoExplosion(new IntVec3(vehicle.Position.x + cell.x, 0, vehicle.Position.z + cell.z), vehicle.Map, component.props.explosionProperties.radius, component.props.explosionProperties.Def, dinfo.Instigator,
-							component.props.explosionProperties.Def.defaultDamage, component.props.explosionProperties.Def.defaultArmorPenetration);
+						report?.AppendLine($"Hit {hitPawn} for {dinfo.Amount}. Impact site = {hitCell}");
+						return;
 					}
-					if (damage > 0 && direction.IsValid)
+					report?.AppendLine($"Applying Damage = {dinfo.Amount} to {component.props.key} at {hitCell}");
+					VehicleComponent.Penetration result = component.TakeDamage(vehicle, ref dinfo);
+					//Effecters and sounds only for first hit
+					if (i == 0)
 					{
-						switch (direction.AsInt)
+						IntVec3 impactCell = new IntVec3(vehicle.Position.x + hitCell.x, 0, vehicle.Position.z + hitCell.z);
+						vehicle.Notify_DamageImpact(new VehicleComponent.DamageResult()
 						{
-							case 0:
-								cell.z += 1;
-								break;
-							case 1:
-								cell.x += 1;
-								break;
-							case 2:
-								cell.z -= 1;
-								break;
-							case 3:
-								cell.x -= 1;
-								break;
-						}
+							penetration = result,
+							damageInfo = dinfo,
+							cell = hitCell
+						});
+					}
+					report?.AppendLine($"Fallthrough Damage = {dinfo.Amount}");
+				}
+			}
+			finally
+			{
+				RecalculateHealthPercent();
+			}
+		}
+
+		private bool HitPawn(DamageInfo dinfo, VehicleComponent.VehiclePartDepth hitDepth, IntVec2 cell, Rot4 dir, out Pawn hitPawn, StringBuilder report = null)
+		{
+			VehicleHandler handler;
+			float multiplier = 1;
+			hitPawn = null;
+			if (hitDepth == VehicleComponent.VehiclePartDepth.External)
+			{
+				multiplier = ChanceDirectHit;
+				TrySelectHandler(cell, out handler, exposed: true);
+			}
+			else
+			{
+				if (TrySelectHandler(cell, out handler))
+				{
+					multiplier = ChanceDirectHit;
+				}
+				else if (dir.IsValid)
+				{
+					//Check immediately behind
+					if (TrySelectHandler(cell.Shifted(dir, 1), out handler))
+					{
+						multiplier = ChanceFallthroughHit;
 					}
 					else
 					{
-						break;
+						//Directly left
+						if (TrySelectHandler(cell.Shifted(dir, 0, -1), out handler))
+						{
+							multiplier = ChanceMajorDeflectHit;
+						}
+						//Directly right
+						else if (TrySelectHandler(cell.Shifted(dir, 0, 1), out handler))
+						{
+							multiplier = ChanceMajorDeflectHit;
+						}
+						//Behind and left
+						else if (TrySelectHandler(cell.Shifted(dir, 1, -1), out handler))
+						{
+							multiplier = ChanceMinorDeflectHit;
+						}
+						//Behind and right
+						else if (TrySelectHandler(cell.Shifted(dir, 1, 1), out handler))
+						{
+							multiplier = ChanceMinorDeflectHit;
+						}
 					}
 				}
 			}
-			vehicle.Map?.GetCachedMapComponent<ListerVehiclesRepairable>().Notify_VehicleTookDamage(vehicle);
+			if (handler != null && handler.handlers.Count > 0 && Rand.Chance(handler.role.chanceToHit * multiplier))
+			{
+				hitPawn = handler.handlers.InnerListForReading.RandomElement();
+				report?.AppendLine($"Hitting {handler} with chance {handler.role.chanceToHit * multiplier}");
+				hitPawn.TakeDamage(dinfo);
+				return true;
+			}
+			return false;
 		}
 
-		private void DamageRoles(DamageInfo dinfo, IntVec2 cell)
+		private bool TrySelectHandler(IntVec2 cell, out VehicleHandler handler, bool exposed = false)
 		{
-			var effectedHandlers = vehicle.handlers.Where(h => h.role.hitbox.Contains(cell)).ToList();
-			foreach (VehicleHandler handler in effectedHandlers)
-			{
-				foreach (Pawn pawn in handler.handlers.InnerListForReading)
-				{
-					pawn.TakeDamage(dinfo);
-				}
-			}
+			handler = vehicle.handlers.FirstOrDefault(handler => handler.role.hitbox != null && handler.role.hitbox.Contains(cell) && handler.handlers.Count > 0 && handler.role.exposed == exposed);
+			return handler != null;
 		}
 
 		private Rot4 DirectionFromAngle(float angle)
@@ -464,7 +516,7 @@ namespace Vehicles
 					}
 					hitboxCells.Add(new IntVec3(x, 0, z));
 				}
-				GenDraw.DrawFieldEdges(hitboxCells, component.props.explosionProperties.Empty ? Color.white : new Color(1, 0.5f, 0));
+				GenDraw.DrawFieldEdges(hitboxCells, component.highlightColor, AltitudeLayer.MetaOverlays.AltitudeFor());
 			}
 			
 			if (VehicleMod.settings.debug.debugDrawHitbox)
@@ -490,8 +542,8 @@ namespace Vehicles
 
 		public void ExposeData()
 		{
-			Scribe_References.Look(ref vehicle, "vehicle", true);
-			Scribe_Collections.Look(ref components, "components", LookMode.Deep);
+			Scribe_References.Look(ref vehicle, nameof(vehicle), true);
+			Scribe_Collections.Look(ref components, nameof(components), LookMode.Deep, vehicle);
 			
 			if (Scribe.mode == LoadSaveMode.PostLoadInit)
 			{

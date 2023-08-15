@@ -18,14 +18,14 @@ namespace Vehicles
 			return !Find.World.Impassable(destinationTile);
 		}
 
-		public override void Arrived(int tile)
+		public override bool Arrived(int tile)
 		{
-			Messages.Message($"ARRIVED AT {tile}", MessageTypeDefOf.PositiveEvent);
+			return true;
 		}
 
 		public static bool CanFormCaravanAt(VehiclePawn vehicle, int tile)
 		{
-			return vehicle.AllPawnsAboard.Count > 0 && WorldVehiclePathGrid.Instance.Passable(tile, vehicle.VehicleDef);
+			return WorldVehiclePathGrid.Instance.Passable(tile, vehicle.VehicleDef);
 		}
 	}
 }

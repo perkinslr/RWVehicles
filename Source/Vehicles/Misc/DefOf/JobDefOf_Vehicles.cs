@@ -23,6 +23,10 @@ namespace Vehicles
 
 		public static JobDef RepairVehicle;
 
+		public static JobDef DisassembleVehicle;
+
+		public static JobDef PaintVehicle;
+
 		public static JobDef CarryItemToVehicle;
 
 		public static JobDef LoadUpgradeMaterials;
@@ -32,7 +36,6 @@ namespace Vehicles
 		public static JobDef RefuelVehicleAtomic;
 
 		public static JobDef UpgradeVehicle;
-
 
 		public static JobDef FollowVehicle;
 

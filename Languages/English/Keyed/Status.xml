@@ -1,20 +1,18 @@
 <?xml version="1.0" encoding="utf-8" ?>
 
 <LanguageData>
-	<FormingCaravanStatus_GatheringItems_Vehicles>Loading cargo.</FormingCaravanStatus_GatheringItems_Vehicles>
-	<FormingCaravanStatus_GatheringItems_Vehicles_Pause>Loading cargo. (waiting)</FormingCaravanStatus_GatheringItems_Vehicles_Pause>
-	<FormingCaravanStatus_GatheringSlaves_Vehicles>Loading Slaves.</FormingCaravanStatus_GatheringSlaves_Vehicles>
-	<FormingCaravanStatus_GatheringSlaves_Vehicles_Pause>Loading Slaves. (waiting)</FormingCaravanStatus_GatheringSlaves_Vehicles_Pause>
-	<FormingCaravanStatus_GatheringDownedPawns_Vehicles>Loading downed pawns.</FormingCaravanStatus_GatheringDownedPawns_Vehicles>
-	<FormingCaravanStatus_GatheringDownedPawns_Vehicles_Pause>Loading downed pawns. (waiting)</FormingCaravanStatus_GatheringDownedPawns_Vehicles_Pause>
-	<FormingCaravanStatus_RopingAnimals>Roping animals to vehicles.</FormingCaravanStatus_RopingAnimals>
-	<FormingCaravanStatus_RopingAnimals_Pause>Roping animals to vehicles. (waiting)</FormingCaravanStatus_RopingAnimals_Pause>
-	<FormingCaravanStatus_BoardVehicles>Boarding.</FormingCaravanStatus_BoardVehicles>
-	<FormingCaravanStatus_BoardVehicles_Pause>Boarding. (waiting)</FormingCaravanStatus_BoardVehicles_Pause>
-	<FormingCaravanStatus_Leaving_Vehicles>Leaving.</FormingCaravanStatus_Leaving_Vehicles>
-	<FormingCaravanStatus_Leaving_Vehicles_Pause>Leaving. (waiting)</FormingCaravanStatus_Leaving_Vehicles_Pause>
-	<SpawningVehicles>Spawning Vehicles</SpawningVehicles>
+	<VF_FormingCaravanStatus_RopingAnimals>Roping animals to vehicles.</VF_FormingCaravanStatus_RopingAnimals>
+	<VF_FormingCaravanStatus_RopingAnimals_Pause>Roping animals to vehicles. (waiting)</VF_FormingCaravanStatus_RopingAnimals_Pause>
+	<VF_FormingCaravanStatus_BoardVehicles>Boarding.</VF_FormingCaravanStatus_BoardVehicles>
+	<VF_FormingCaravanStatus_BoardVehicles_Pause>Boarding. (waiting)</VF_FormingCaravanStatus_BoardVehicles_Pause>
+	<VF_FormingCaravanStatus_Leaving_Vehicles>Leaving.</VF_FormingCaravanStatus_Leaving_Vehicles>
+	<VF_FormingCaravanStatus_Leaving_Vehicles_Pause>Leaving. (waiting)</VF_FormingCaravanStatus_Leaving_Vehicles_Pause>
 	
-	<GeneratingMapForCrashEvent>Generating Map For Crash Event</GeneratingMapForCrashEvent>
-	<VehiclesTextMeshBiomeGeneration>Generating TextMesh GameObjects on World Map.</VehiclesTextMeshBiomeGeneration>
+	<!-- cannot be def injected because they are filled from Abstract def in VehiclePawnBase-->
+	<VF_draftLabel>Start Engine</VF_draftLabel>
+	<VF_healthLabel_Healthy>Operational</VF_healthLabel_Healthy>
+	<VF_healthLabel_Injured>Needs Repairs</VF_healthLabel_Injured>
+	<VF_healthLabel_Immobile>Inoperable</VF_healthLabel_Immobile>
+	<VF_healthLabel_Dead>Ruined</VF_healthLabel_Dead>
+	<VF_healthLabel_Beached>Beached</VF_healthLabel_Beached>
 </LanguageData>

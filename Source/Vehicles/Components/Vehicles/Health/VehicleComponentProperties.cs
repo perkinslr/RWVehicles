@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Verse;
+using RimWorld;
 using SmashTools;
 
 namespace Vehicles
@@ -14,40 +16,42 @@ namespace Vehicles
 		public Type compClass;
 
 		public int health;
-		public float armor;
-		public ExplosionProperties explosionProperties;
-		public int efficiencyWeight = 1;
+		public VehicleComponent.VehiclePartDepth depth;
+		public float efficiencyWeight = 1;
+		public float hitWeight = 1;
+		public List<StatModifier> armor;
+		public bool priorityStatEfficiency = false;
 
 		public ComponentHitbox hitbox = new ComponentHitbox();
 		public List<VehicleStatDef> categories;
+		public LinearCurve efficiency;
 
-		public SimpleCurve efficiency;
+		public List<Reactor> reactors;
+		public List<string> tags;
+
+		public virtual T GetReactor<T>() where T : Reactor
+		{
+			return reactors?.FirstOrDefault(reactor => reactor is T) as T;
+		}
+
+		public virtual bool HasReactor<T>() where T : Reactor
+		{
+			return reactors?.FirstOrDefault(reactor => reactor is T) != null;
+		}
 
 		public virtual void ResolveReferences(VehicleDef def)
 		{
-			if (efficiency is null)
+			efficiency ??= new LinearCurve()
 			{
-				efficiency = new SimpleCurve()
-				{
-					new CurvePoint(0.25f, 0),
-					new CurvePoint(0.35f, 0.35f),
-					new CurvePoint(0.75f, 0.75f),
-					new CurvePoint(0.85f, 1),
-					new CurvePoint(1, 1)
-				};
-			}
-			if (categories is null)
-			{
-				categories = new List<VehicleStatDef>();
-			}
-			if (compClass is null)
-			{
-				compClass = typeof(VehicleComponent);
-			}
-			if (!explosionProperties.Empty)
-			{
-				explosionProperties.Def = DefDatabase<DamageDef>.GetNamed(explosionProperties.damageDef);
-			}
+				new CurvePoint(0, 0),
+				new CurvePoint(0.25f, 0f),
+				new CurvePoint(0.4f, 0.4f),
+				new CurvePoint(0.7f, 0.7f),
+				new CurvePoint(0.85f, 1),
+				new CurvePoint(1, 1)
+			};
+			categories ??= new List<VehicleStatDef>();
+			compClass ??= typeof(VehicleComponent);
 			hitbox.Initialize(def);
 		}
 
@@ -67,23 +71,12 @@ namespace Vehicles
 			}
 			if (hitbox is null)
 			{
-				yield return $"{key}: <field>hitbox</field> must be specified.".ConvertRichText();
+				yield return $"{key}: <field>hitbox</field> must be specified even if it occupies no cells.".ConvertRichText();
 			}
 			if (efficiencyWeight == 0)
 			{
 				yield return $"{key}: <field>efficiencyWeight</field> cannot = 0. If average weight = 0, resulting damage will be NaN, causing an instant-kill on the vehicle.";
 			}
-		}
-
-		public struct ExplosionProperties
-		{
-			public float chance;
-			public int radius;
-			public string damageDef;
-
-			public DamageDef Def { get; set; }
-
-			public bool Empty => string.IsNullOrEmpty(damageDef);
 		}
 	}
 }

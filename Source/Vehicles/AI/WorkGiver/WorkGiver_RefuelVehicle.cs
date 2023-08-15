@@ -30,9 +30,7 @@ namespace Vehicles
 
 		public override bool HasJobOnThing(Pawn pawn, Thing t, bool forced = false)
 		{
-			// Assigned to flag for debugging
-			bool flag = t is VehiclePawn vehicle && vehicle.CompFueledTravel != null && CanRefuel(pawn, vehicle, forced) && !vehicle.vPather.Moving;
-			return flag;
+			return t is VehiclePawn vehicle && vehicle.CompFueledTravel != null && CanRefuel(pawn, vehicle, forced) && !vehicle.vPather.Moving;
 		}
 
 		public override Job JobOnThing(Pawn pawn, Thing t, bool forced = false)
@@ -40,10 +38,12 @@ namespace Vehicles
 			Job job = null;
 			if (t is VehiclePawn vehicle && vehicle.CompFueledTravel != null)
 			{
-				Thing t2 = vehicle.CompFueledTravel.ClosestFuelAvailable(pawn);
-				if (t2 is null)
+				Thing closestFuel = vehicle.CompFueledTravel.ClosestFuelAvailable(pawn);
+				if (closestFuel is null)
+				{
 					return null;
-				return JobMaker.MakeJob(JobDefOf_Vehicles.RefuelVehicle, vehicle, t2);
+				}
+				return JobMaker.MakeJob(JobDefOf_Vehicles.RefuelVehicle, vehicle, closestFuel);
 			}
 			
 			return job;
@@ -51,8 +51,12 @@ namespace Vehicles
 
 		public static bool CanRefuel(Pawn pawn, VehiclePawn vehicle, bool forced = false)
 		{
-			var comp = vehicle.CompFueledTravel;
-			if (comp is null || comp.FullTank)
+			CompFueledTravel compFueler = vehicle.CompFueledTravel;
+			if (compFueler is null || compFueler.FullTank)
+			{
+				return false;
+			}
+			if (!forced && !compFueler.ShouldAutoRefuelNow)
 			{
 				return false;
 			}
@@ -64,9 +68,9 @@ namespace Vehicles
 			{
 				return false;
 			}
-			if (comp.ClosestFuelAvailable(pawn) is null)
+			if (compFueler.ClosestFuelAvailable(pawn) is null)
 			{
-				JobFailReason.Is("NoFuelToRefuel".Translate(comp.Props.fuelType), null);
+				JobFailReason.Is("NoFuelToRefuel".Translate(compFueler.Props.fuelType), null);
 				return false;
 			}
 			return true;

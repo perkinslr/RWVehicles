@@ -120,7 +120,7 @@ namespace Vehicles
 			for (int i = 0; i < instructionList.Count; i++)
 			{
 				CodeInstruction instruction = instructionList[i];
-				if(instruction.LoadsField(AccessTools.Field(typeof(JobDefOf), nameof(JobDefOf.GiveToPackAnimal))))
+				if (instruction.LoadsField(AccessTools.Field(typeof(JobDefOf), nameof(JobDefOf.GiveToPackAnimal))))
 				{
 					yield return instruction; //Ldsfld : JobDefOf::GiveToPackAnimal
 					instruction = instructionList[++i];
@@ -193,7 +193,21 @@ namespace Vehicles
 		public static bool ExitMapAndJoinOrCreateVehicleCaravan(Pawn pawn, Rot4 exitDir)
 		{
 			VehiclePawn vehicle = pawn as VehiclePawn;
+			if (vehicle != null && CaravanHelper.OpportunistcallyCreatedAerialVehicle(vehicle, pawn.Map.Tile))
+			{
+				return false;
+			}
 			Caravan caravan = CaravanHelper.FindCaravanToJoinForAllowingVehicles(pawn);
+			if (caravan == null && CaravanHelper.FindAerialVehicleToJoinForAllowingVehicles(pawn) is AerialVehicleInFlight aerialVehicle)
+			{
+				VehicleHandler handler = aerialVehicle.vehicle.handlers.FirstOrDefault(handler => handler.AreSlotsAvailable);
+				if (handler != null)
+				{
+					aerialVehicle.vehicle.GiveLoadJob(pawn, handler);
+					aerialVehicle.vehicle.Notify_Boarded(pawn);
+					return false;
+				}
+			}
 			if (caravan is VehicleCaravan vehicleCaravan && (vehicle is null || vehicle.IsBoat() == vehicleCaravan.LeadVehicle.IsBoat()))
 			{
 				CaravanHelper.AddVehicleCaravanExitTaleIfShould(pawn);
@@ -205,14 +219,14 @@ namespace Vehicles
 			{
 				Map map = pawn.Map;
 				int directionTile = CaravanHelper.FindRandomStartingTileBasedOnExitDir(vehicle, map.Tile, exitDir);
-				VehicleCaravan vehicleCaravan2 = CaravanHelper.ExitMapAndCreateVehicleCaravan(Gen.YieldSingle(pawn), pawn.Faction, map.Tile, directionTile, -1);
-				vehicleCaravan2.autoJoinable = true;
+				VehicleCaravan newCaravan = CaravanHelper.ExitMapAndCreateVehicleCaravan(Gen.YieldSingle(pawn), pawn.Faction, map.Tile, directionTile, -1);
+				newCaravan.autoJoinable = true;
 
 				if (caravan != null)
 				{
-					caravan.pawns.TryTransferAllToContainer(vehicleCaravan2.pawns);
+					caravan.pawns.TryTransferAllToContainer(newCaravan.pawns);
 					caravan.Destroy();
-					vehicleCaravan2.Notify_Merged(new List<Caravan>() { caravan });
+					newCaravan.Notify_Merged(new List<Caravan>() { caravan });
 				}
 				bool animalWantsToJoin = false;
 				foreach (Pawn mapPawn in map.mapPawns.AllPawnsSpawned)

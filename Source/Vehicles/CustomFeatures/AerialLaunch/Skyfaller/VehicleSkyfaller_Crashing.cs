@@ -9,7 +9,6 @@ using UnityEngine;
 
 namespace Vehicles
 {
-	//REDO - CACHE LAUNCH PROTOCOL
 	public class VehicleSkyfaller_Crashing : VehicleSkyfaller_Arriving
 	{
 		public const float DefaultAngle = -65;
@@ -131,8 +130,7 @@ namespace Vehicles
 			if (def.skyfaller.CausesExplosion)
 			{
 				GenExplosion.DoExplosion(Position, Map, def.skyfaller.explosionRadius, def.skyfaller.explosionDamage, null, 
-					GenMath.RoundRandom(def.skyfaller.explosionDamage.defaultDamage * def.skyfaller.explosionDamageFactor), 
-					-1f, null, null, null, null, null, 0f, 1, false, null, 0f, 1, 0f, false, null, (!def.skyfaller.damageSpawnedThings) ? vehicle.inventory.innerContainer.ToList() : null);
+					GenMath.RoundRandom(def.skyfaller.explosionDamage.defaultDamage * def.skyfaller.explosionDamageFactor), ignoredThings: (!def.skyfaller.damageSpawnedThings) ? vehicle.inventory.innerContainer.ToList() : null);
 			}
 			//this.SpawnThings();
 			CellRect cellRect = this.OccupiedRect();
@@ -200,9 +198,12 @@ namespace Vehicles
 
 		protected override void FinalizeLanding()
 		{
+			vehicle.CrashLanded = true;
 			vehicle.CompVehicleLauncher.inFlight = false;
 			GenSpawn.Spawn(vehicle, Position, Map, Rotation);
 			vehicle.Angle = angle + Rotation.AsAngle;
+			vehicle.DisembarkAll();
+			vehicle.ignition.Drafted = false;
 			Destroy();
 		}
 
@@ -211,9 +212,9 @@ namespace Vehicles
 			base.SpawnSetup(map, respawningAfterLoad);
 			if (!respawningAfterLoad)
 			{
-				vehicle.CompVehicleLauncher.launchProtocol.SetPositionArriving(new Vector3(DrawPos.x, DrawPos.y + 1, DrawPos.z), Rotation, map);
-				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(true);
-				delayLandingTicks = vehicle.CompVehicleLauncher.launchProtocol.landingProperties?.delayByTicks ?? 0;
+				vehicle.CompVehicleLauncher.launchProtocol.Prepare(map, Position, Rotation);
+				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(LaunchProtocol.LaunchType.Landing);
+				delayLandingTicks = vehicle.CompVehicleLauncher.launchProtocol.CurAnimationProperties.delayByTicks;
 
 				ticksToImpact = def.skyfaller.ticksToImpactRange.RandomInRange;
 				if (def.skyfaller.MakesShrapnel)

@@ -13,8 +13,7 @@ namespace Vehicles
 
 		public override bool TryMakePreToilReservations(bool errorOnFailed)
 		{
-			int maxWorkers = Vehicle.TotalAllowedFor(JobDefOf_Vehicles.LoadUpgradeMaterials);
-			return base.TryMakePreToilReservations(errorOnFailed) && pawn.Map.GetCachedMapComponent<VehicleReservationManager>().Reserve<ThingDefCountClass, VehicleNodeReservation>(Vehicle, pawn, job, ThingDef, maxWorkers);
+			return base.TryMakePreToilReservations(errorOnFailed) && pawn.Map.GetCachedMapComponent<VehicleReservationManager>().Reserve<ThingDefCountClass, VehicleNodeReservation>(Vehicle, pawn, job, ThingDef);
 		}
 
 		protected override IEnumerable<Toil> MakeNewToils()
@@ -26,12 +25,12 @@ namespace Vehicles
 			yield return Toils_Haul.StartCarryThing(TargetIndex.A, false, false, false);
 			yield return Toils_Goto.GotoThing(TargetIndex.B, PathEndMode.Touch).FailOnDespawnedNullOrForbidden(TargetIndex.B).FailOn(() => !Vehicle.CompUpgradeTree.CurrentlyUpgrading 
 				|| !Vehicle.CompUpgradeTree.NodeUnlocking.AvailableSpace(Item));
-			yield return GiveAsMuchToShipAsPossible();
+			yield return GiveAsMuchToVehicleAsPossible();
 			yield return Toils_Jump.JumpIf(FindNearestVehicle(), () => pawn.carryTracker.CarriedThing != null);
 			yield break;
 		}
 
-		protected override Toil GiveAsMuchToShipAsPossible()
+		protected override Toil GiveAsMuchToVehicleAsPossible()
 		{
 			return new Toil
 			{

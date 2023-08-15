@@ -17,6 +17,8 @@ namespace Vehicles
 		public const int DefaultTicksPerMove = 3300;
 		private const float MoveSpeedFactorAtZeroMass = 2f;
 
+		private static List<int> moveSpeedTicks = new List<int>();
+
 		public static int GetTicksPerMove(Caravan caravan, StringBuilder explanation = null)
 		{
 			if (caravan == null)
@@ -25,75 +27,72 @@ namespace Vehicles
 				{
 					AppendUsingDefaultTicksPerMoveInfo(explanation);
 				}
-				return 3300;
+				return DefaultTicksPerMove;
 			}
-			return GetTicksPerMove(new VehicleInfo(caravan), explanation);
+			return GetTicksPerMove(new VehicleCaravanInfo(caravan), explanation);
 		}
 
-		public static int GetTicksPerMove(VehicleInfo caravanInfo, StringBuilder explanation = null)
+		public static int GetTicksPerMove(VehicleCaravanInfo caravanInfo, StringBuilder explanation = null)
 		{
-			return GetTicksPerMove(caravanInfo.vehicles, caravanInfo.massUsage, caravanInfo.massCapacity, explanation);
+			return GetTicksPerMove(caravanInfo.pawns, caravanInfo.massUsage, caravanInfo.massCapacity, explanation);
 		}
 
-		public static int GetTicksPerMove(List<VehiclePawn> pawns, float massUsage, float massCapacity, StringBuilder explanation = null)
+		public static int GetTicksPerMove(List<Pawn> pawns, float massUsage, float massCapacity, StringBuilder explanation = null)
 		{
-			if (pawns.NotNullAndAny())
+			if (!pawns.NullOrEmpty())
 			{
+				moveSpeedTicks.Clear();
+				StringBuilder ticksExplanation = null;
 				if (explanation != null)
 				{
-					explanation.Append("CaravanMovementSpeedFull".Translate() + ":");
+					ticksExplanation = new StringBuilder();
 				}
-				float num = 0f;
-				for (int i = 0; i < pawns.Count; i++)
+				foreach (Pawn pawn in pawns)
 				{
-					float num2 = ((pawns[i].Downed || pawns[i].CarriedByCaravan()) ? DownedPawnMoveTicks : pawns[i].TicksPerMoveCardinal);
-					num2 = Mathf.Min(num2, MaxPawnTicksPerMove) * 340f;
-					float num3 = 60000f / num2;
-					if (explanation != null)
+					if (pawn is VehiclePawn vehicle)
 					{
-						explanation.AppendLine();
-						explanation.Append(string.Concat(new string[]
-						{
-							"  - ",
-							pawns[i].LabelShortCap,
-							": ",
-							num3.ToString("0.#"),
-							" "
-						}) + "TilesPerDay".Translate());
-						if (pawns[i].Downed)
-						{
-							explanation.Append(" (" + "DownedLower".Translate() + ")");
-						}
-						else if (pawns[i].CarriedByCaravan())
-						{
-							explanation.Append(" (" + "Carried".Translate() + ")");
-						}
+						float worldSpeedMultiplier = SettingsCache.TryGetValue(vehicle.VehicleDef, typeof(VehicleProperties), nameof(VehicleProperties.worldSpeedMultiplier), vehicle.VehicleDef.properties.worldSpeedMultiplier);
+						float moveSpeed = vehicle.GetStatValue(VehicleStatDefOf.MoveSpeed) * worldSpeedMultiplier / 60;
+						int ticksPerTile = TicksFromMoveSpeed(moveSpeed);
+						moveSpeedTicks.Add(ticksPerTile);
+						ticksExplanation?.AppendLine($"  {vehicle.LabelCap}: {GenDate.TicksPerDay / ticksPerTile:0.#} {"TilesPerDay".Translate()}");
 					}
-					num += num2 / (float)pawns.Count;
+					else if (!pawn.IsInVehicle())
+					{
+						float moveSpeed = ThingDefOf.Human.GetStatValueAbstract(StatDefOf.MoveSpeed) / 60f;
+						int ticksPerTile = TicksFromMoveSpeed(moveSpeed);
+						moveSpeedTicks.Add(ticksPerTile);
+						ticksExplanation?.AppendLine($"  {pawn.LabelCap}: {GenDate.TicksPerDay / ticksPerTile:0.#} {"TilesPerDay".Translate()}");
+					}
 				}
-				float moveSpeedFactorFromMass = GetMoveSpeedFactorFromMass(massUsage, massCapacity);
+				float averageVehicleSpeed = (float)moveSpeedTicks.Average();
+				int averageVehicleTicks = Mathf.RoundToInt(averageVehicleSpeed);
 				if (explanation != null)
 				{
-					float num4 = 60000f / num;
+					explanation.AppendLine($"{"CaravanMovementSpeedFull".Translate()}:");
+					explanation.AppendLine(ticksExplanation.ToString());
+					if (massUsage > massCapacity)
+					{
+						explanation.AppendLine($"  {"MultiplierForCarriedMass".Translate()}");
+					}
 					explanation.AppendLine();
-					explanation.Append("  " + "Average".Translate() + ": " + num4.ToString("0.#") + " " + "TilesPerDay".Translate());
-					explanation.AppendLine();
-					explanation.Append("  " + "MultiplierForCarriedMass".Translate(moveSpeedFactorFromMass.ToStringPercent()));
+					explanation.AppendLine($"  {"Average".Translate()}: {GenDate.TicksPerDay / averageVehicleTicks:0.#} {"TilesPerDay".Translate()}");
 				}
-				int num5 = Mathf.Max(Mathf.RoundToInt(num / moveSpeedFactorFromMass), 1);
-				if (explanation != null)
-				{
-					float num6 = 60000f / (float)num5;
-					explanation.AppendLine();
-					explanation.Append("  " + "FinalCaravanPawnsMovementSpeed".Translate() + ": " + num6.ToString("0.#") + " " + "TilesPerDay".Translate());
-				}
-				return num5;
+				return averageVehicleTicks;
 			}
 			if (explanation != null)
 			{
 				AppendUsingDefaultTicksPerMoveInfo(explanation);
 			}
-			return 3300;
+			return DefaultTicksPerMove;
+
+			int TicksFromMoveSpeed(float moveSpeed)
+			{
+				int moveSpeedRatio = Mathf.RoundToInt(1 / moveSpeed);
+				float tickSpeed = moveSpeedRatio * CellToTilesConversionRatio;
+				int ticksPerTile = Mathf.Max(Mathf.RoundToInt(tickSpeed), 1);
+				return ticksPerTile;
+			}
 		}
 
 		private static float GetMoveSpeedFactorFromMass(float massUsage, float massCapacity)
@@ -106,40 +105,58 @@ namespace Vehicles
 			return Mathf.Lerp(MoveSpeedFactorAtZeroMass, 1f, t);
 		}
 
-		private static void AppendUsingDefaultTicksPerMoveInfo(StringBuilder sb)
+		private static void AppendUsingDefaultTicksPerMoveInfo(StringBuilder explanation)
 		{
-			sb.Append("CaravanMovementSpeedFull".Translate() + ":");
-			float num = 18.181818f;
-			sb.AppendLine();
-			sb.Append("  " + "Default".Translate() + ": " + num.ToString("0.#") + " " + "TilesPerDay".Translate());
+			explanation.Append($"{"CaravanMovementSpeedFull".Translate()}:");
+			explanation.AppendLine();
+			explanation.Append($"  {"Default".Translate()}: {18.181818f:0.#} {"TilesPerDay".Translate()}");
 		}
 
-		public struct VehicleInfo
+		public static float ApproxTilesPerDay(VehicleCaravan caravan, StringBuilder explanation = null)
 		{
-			public VehicleInfo(List<VehiclePawn> vehicles)
+			return ApproxTilesPerDay(caravan.UniqueVehicleDefsInCaravan().ToList(), caravan.TicksPerMove, caravan.Tile, caravan.vPather.Moving ? caravan.vPather.nextTile : -1, explanation, explanation != null ? caravan.TicksPerMoveExplanation : null);
+		}
+
+		public static float ApproxTilesPerDay(List<VehicleDef> vehicleDefs, int ticksPerMove, int tile, int nextTile, StringBuilder explanation = null, string caravanTicksPerMoveExplanation = null)
+		{
+			if (nextTile == -1)
 			{
-				this.vehicles = vehicles;
-				massUsage = vehicles.Sum(v => MassUtility.GearAndInventoryMass(v));
-				massCapacity = vehicles.Sum(v => v.GetStatValue(VehicleStatDefOf.CargoCapacity));
+				nextTile = Find.WorldGrid.FindMostReasonableAdjacentTileForDisplayedPathCost(tile);
+			}
+			int num = Mathf.CeilToInt(VehicleCaravan_PathFollower.CostToMove(vehicleDefs, ticksPerMove, tile, nextTile, ticksAbs: null, explanation: explanation, caravanTicksPerMoveExplanation: caravanTicksPerMoveExplanation));
+			if (num == 0)
+			{
+				return 0f;
+			}
+			return 60000f / num;
+		}
+
+		public struct VehicleCaravanInfo
+		{
+			public List<Pawn> pawns;
+			public float massUsage;
+			public float massCapacity;
+
+			public VehicleCaravanInfo(List<Pawn> pawns)
+			{
+				this.pawns = pawns;
+				massUsage = pawns.Sum(pawn => MassUtility.GearAndInventoryMass(pawn));
+				massCapacity = pawns.Sum(pawn => pawn is VehiclePawn vehicle ? vehicle.GetStatValue(VehicleStatDefOf.CargoCapacity) : (pawn.IsInVehicle() ? 0 : MassUtility.Capacity(pawn)));
 			}
 
-			public VehicleInfo(Caravan caravan)
+			public VehicleCaravanInfo(Caravan caravan)
 			{
-				vehicles = caravan.PawnsListForReading.Where(v => v is VehiclePawn).Cast<VehiclePawn>().ToList();
+				pawns = caravan.PawnsListForReading;
 				massUsage = caravan.MassUsage;
 				massCapacity = caravan.MassCapacity;
 			}
 
-			public VehicleInfo(Dialog_FormVehicleCaravan formCaravanDialog)
+			public VehicleCaravanInfo(Dialog_FormVehicleCaravan formCaravanDialog)
 			{
-				vehicles = TransferableUtility.GetPawnsFromTransferables(formCaravanDialog.transferables).Where(v => v is VehiclePawn).Cast<VehiclePawn>().ToList();
+				pawns = TransferableUtility.GetPawnsFromTransferables(formCaravanDialog.transferables);
 				massUsage = formCaravanDialog.MassUsage;
 				massCapacity = formCaravanDialog.MassCapacity;
 			}
-
-			public List<VehiclePawn> vehicles;
-			public float massUsage;
-			public float massCapacity;
 		}
 	}
 }

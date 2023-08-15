@@ -1,10 +1,15 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Configuration>
   <Excluded>
-    <exclude>D:\Steam\steamapps\common\RimWorld\Mods\Vehicles\.git</exclude>
-    <exclude>D:\Steam\steamapps\common\RimWorld\Mods\Vehicles\1.3\Defs\Vehicles\Ignore</exclude>
-    <exclude>D:\Steam\steamapps\common\RimWorld\Mods\Vehicles\Source</exclude>
-    <exclude>D:\Steam\steamapps\common\RimWorld\Mods\Vehicles\Textures\Graphics\Skins\Ignore</exclude>
-    <exclude>D:\Steam\steamapps\common\RimWorld\Mods\Vehicles\Textures\Vehicles\Ignore</exclude>
+    <exclude>.git</exclude>
+    <exclude>.vs</exclude>
+    <exclude>1.4\Assemblies\SmashTools.pdb</exclude>
+    <exclude>1.4\Assemblies\UpdateLogTool.pdb</exclude>
+    <exclude>1.4\Assemblies\Vehicles.pdb</exclude>
+    <exclude>1.4\Defs\Ignore</exclude>
+    <exclude>About\PreviewArt</exclude>
+    <exclude>Source</exclude>
+    <exclude>Textures\Ignore</exclude>
+    <exclude>UpdateBuildFile.bat</exclude>
   </Excluded>
 </Configuration>

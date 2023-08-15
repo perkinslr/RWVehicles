@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using Verse;
 using Verse.AI;
@@ -11,6 +12,8 @@ namespace Vehicles
 {
 	public class JobDriver_GiveToVehicle : JobDriver
 	{
+		private static FieldInfo countToTransferFieldInfo = AccessTools.Field(typeof(TransferableOneWay), "countToTransfer");
+
 		public virtual Thing Item
 		{
 			get
@@ -41,10 +44,15 @@ namespace Vehicles
 		{
 			this.FailOnDestroyedOrNull(TargetIndex.A);
 			this.FailOnDestroyedOrNull(TargetIndex.B);
+			this.FailOn(delegate ()
+			{
+				return !Map.GetCachedMapComponent<VehicleReservationManager>().VehicleListed(Vehicle, ReservationType.LoadVehicle);
+			});
 			yield return Toils_Goto.GotoThing(TargetIndex.A, PathEndMode.ClosestTouch);
 			yield return Toils_Haul.StartCarryThing(TargetIndex.A, false, false, false);
 			yield return Toils_Goto.GotoThing(TargetIndex.B, PathEndMode.Touch).FailOnDespawnedNullOrForbidden(TargetIndex.B);
-			yield return GiveAsMuchToShipAsPossible();
+			yield return Toils_General.Wait(25, TargetIndex.None).WithProgressBarToilDelay(TargetIndex.B);
+			yield return GiveAsMuchToVehicleAsPossible();
 		}
 
 		protected virtual Toil FindNearestVehicle()
@@ -60,31 +68,32 @@ namespace Vehicles
 					}
 					else
 					{
-						this.job.SetTarget(TargetIndex.B, pawn);
+						job.SetTarget(TargetIndex.B, pawn);
 					}
 				}
 			};
 		}
 
-		protected virtual Toil GiveAsMuchToShipAsPossible()
+		protected virtual Toil GiveAsMuchToVehicleAsPossible()
 		{
 			return new Toil
 			{
 				initAction = delegate ()
 				{
-					if(Item is null)
+					if (Item is null || Item.stackCount == 0)
 					{
 						pawn.jobs.EndCurrentJob(JobCondition.Incompletable, true);
 					}
 					else
 					{
-						pawn.carryTracker.innerContainer.TryTransferToContainer(Item, Vehicle.inventory.innerContainer, Item.stackCount, true);
-						TransferableOneWay transferable = Vehicle.cargoToLoad.FirstOrDefault(t => t.AnyThing is {def: var def} && def == Item.def);
-                        if (transferable is null)
+						int stackCount = Item.stackCount; //store before transfer for transferable recache
+
+						int result = Vehicle.AddOrTransfer(Item, stackCount);
+						TransferableOneWay transferable = Vehicle.cargoToLoad.FirstOrDefault(t => t.AnyThing is {def: ThingDef def} && def == Item.def);
+                        if (transferable != null)
                         {
-							pawn.jobs.EndCurrentJob(JobCondition.Incompletable, true);
-                        }
-						AccessTools.Field(typeof(TransferableOneWay), "countToTransfer").SetValue(transferable, transferable.CountToTransfer - job.count);
+							countToTransferFieldInfo.SetValue(transferable, transferable.CountToTransfer - stackCount);
+						}
 					}
 				}
 			};

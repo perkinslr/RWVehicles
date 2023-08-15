@@ -10,10 +10,11 @@ using SmashTools;
 namespace Vehicles
 {
 	[StaticConstructorOnStartup]
-	public class VehicleCaravan : Caravan
+	public class VehicleCaravan : Caravan, IVehicleWorldObject
 	{
-		private static MaterialPropertyBlock propertyBlock = new MaterialPropertyBlock();
 		private static readonly Texture2D SplitCommand = ContentFinder<Texture2D>.Get("UI/Commands/SplitCaravan", true);
+
+		private static MaterialPropertyBlock propertyBlock = new MaterialPropertyBlock();
 		private static Dictionary<ThingDef, Material> materials = new Dictionary<ThingDef, Material>();
 
 		public VehicleCaravan_PathFollower vPather;
@@ -28,6 +29,36 @@ namespace Vehicles
 		}
 
 		public override Vector3 DrawPos => vTweener.TweenedPos;
+
+		public bool CanDismount => true;
+
+		public IEnumerable<VehiclePawn> Vehicles
+		{
+			get
+			{
+				foreach (Pawn pawn in PawnsListForReading)
+				{
+					if (pawn is VehiclePawn vehicle)
+					{
+						yield return vehicle;
+					}
+				}
+			}
+		}
+
+		public IEnumerable<Pawn> DismountedPawns
+		{
+			get
+			{
+				foreach (Pawn pawn in PawnsListForReading)
+				{
+					if (!(pawn is VehiclePawn) && !pawn.IsInVehicle())
+					{
+						yield return pawn;
+					}
+				}
+			}
+		}
 
 		public VehiclePawn LeadVehicle
 		{
@@ -46,8 +77,7 @@ namespace Vehicles
 			get
 			{
 				VehicleDef leadVehicleDef = (PawnsListForReading.First(v => v is VehiclePawn) as VehiclePawn).VehicleDef;
-				
-				if(!materials.ContainsKey(leadVehicleDef))
+				if (!materials.ContainsKey(leadVehicleDef))
 				{
 					var texture = VehicleTex.CachedTextureIcons[leadVehicleDef];
 					var material = MaterialPool.MatFrom(texture, ShaderDatabase.WorldOverlayTransparentLit, Color.white, WorldMaterials.WorldObjectRenderQueue);
@@ -57,7 +87,39 @@ namespace Vehicles
 			}
 		}
 
-		//REDO : Implement custom caravan icons
+		public bool OutOfFuel
+		{
+			get
+			{
+				foreach (VehiclePawn vehicle in Vehicles)
+				{
+					if (vehicle.CompFueledTravel != null && vehicle.CompFueledTravel.Fuel <= 0)
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+
+		public new int TicksPerMove
+		{
+			get
+			{
+				return VehicleCaravanTicksPerMoveUtility.GetTicksPerMove(this, null);
+			}
+		}
+
+		public new string TicksPerMoveExplanation
+		{
+			get
+			{
+				StringBuilder stringBuilder = new StringBuilder();
+				VehicleCaravanTicksPerMoveUtility.GetTicksPerMove(this, stringBuilder);
+				return stringBuilder.ToString();
+			}
+		}
+
 		public override void Draw()
 		{
 			float averageTileSize = Find.WorldGrid.averageTileSize;
@@ -146,16 +208,24 @@ namespace Vehicles
 
 		public override IEnumerable<Gizmo> GetGizmos()
 		{
-			if (Find.WorldSelector.SingleSelectedObject == this)
+			foreach (Gizmo gizmo in base.GetGizmos())
 			{
-				yield return new Gizmo_CaravanInfo(this);
+				//Only pull non-devmode gizmos
+				if (!DebugSettings.ShowDevGizmos || !(gizmo is Command command) || command.icon)
+				{
+					yield return gizmo;
+				}
 			}
-			foreach (Gizmo gizmo in base.GetGizmos().Where(g => g is Command_Action && (g as Command_Action).defaultLabel != "Dev: Mental break" 
-				&& (g as Command_Action).defaultLabel != "Dev: Make random pawn hungry" && (g as Command_Action).defaultLabel != "Dev: Kill random pawn" 
-				&& (g as Command_Action).defaultLabel != "Dev: Harm random pawn" && (g as Command_Action).defaultLabel != "Dev: Down random pawn"
-				&& (g as Command_Action).defaultLabel != "Dev: Plague on random pawn" && (g as Command_Action).defaultLabel != "Dev: Teleport to destination"))
+
+			foreach (VehiclePawn vehicle in Vehicles)
 			{
-				yield return gizmo;
+				foreach (VehicleComp vehicleComp in vehicle.AllComps.Where(comp => comp is VehicleComp))
+				{
+					foreach (Gizmo gizmo in vehicleComp.CompCaravanGizmos())
+					{
+						yield return gizmo;
+					}
+				}
 			}
 
 			if (IsPlayerControlled)
@@ -196,7 +266,7 @@ namespace Vehicles
 					}
 				}
 			}
-			if (Prefs.DevMode)
+			if (Prefs.DevMode && DebugSettings.godMode)
 			{
 				yield return new Command_Action
 				{
@@ -214,8 +284,8 @@ namespace Vehicles
 				{
 					Command_Action dock = new Command_Action();
 					dock.icon = VehicleTex.Anchor;
-					dock.defaultLabel = Find.WorldObjects.AnySettlementBaseAt(Tile) ? "CommandDockShip".Translate() : "CommandDockShipDisembark".Translate();
-					dock.defaultDesc = Find.WorldObjects.AnySettlementBaseAt(Tile) ? "CommandDockShipDesc".Translate(Find.WorldObjects.SettlementBaseAt(Tile)) : "CommandDockShipObjectDesc".Translate();
+					dock.defaultLabel = Find.WorldObjects.AnySettlementBaseAt(Tile) ? "VF_CommandDockShip".Translate() : "VF_CommandDockShipDisembark".Translate();
+					dock.defaultDesc = Find.WorldObjects.AnySettlementBaseAt(Tile) ? "VF_CommandDockShipDesc".Translate(Find.WorldObjects.SettlementBaseAt(Tile)) : "VF_CommandDockShipObjectDesc".Translate();
 					dock.action = delegate ()
 					{
 						List<WorldObject> objects = Find.WorldObjects.ObjectsAt(Tile).ToList();
@@ -236,8 +306,8 @@ namespace Vehicles
 					Command_Action undock = new Command_Action
 					{
 						icon = VehicleTex.UnloadAll,
-						defaultLabel = "CommandUndockShip".Translate(),
-						defaultDesc = "CommandUndockShipDesc".Translate(Label),
+						defaultLabel = "VF_CommandUndockShip".Translate(),
+						defaultDesc = "VF_CommandUndockShipDesc".Translate(Label),
 						action = delegate ()
 						{
 							CaravanHelper.ToggleDocking(this, false);
@@ -277,7 +347,7 @@ namespace Vehicles
 				RemovePawn(member);
 			}
 		}
-
+		
 		public override string GetInspectString()
 		{
 			StringBuilder stringBuilder = new StringBuilder();
@@ -303,7 +373,7 @@ namespace Vehicles
 			if (vehicles >= 1)
 			{
 				Dictionary<VehicleDef, int> vehicleCounts = new Dictionary<VehicleDef, int>();
-				foreach (VehiclePawn vehicle in PawnsListForReading.Where(x => x is VehiclePawn))
+				foreach (VehiclePawn vehicle in Vehicles)
 				{
 					if (vehicleCounts.ContainsKey(vehicle.VehicleDef))
 					{
@@ -350,6 +420,13 @@ namespace Vehicles
 				}
 				stringBuilder.Append("CaravanPawnsDowned".Translate(downed));
 			}
+			foreach (VehiclePawn vehicle in Vehicles)
+			{
+				foreach (VehicleComp vehicleComp in vehicle.AllComps.Where(comp => comp is VehicleComp))
+				{
+					vehicleComp.CompCaravanInspectString(stringBuilder);
+				}
+			}
 			if (mentalState > 0 || downed > 0)
 			{
 				stringBuilder.AppendLine();
@@ -363,7 +440,7 @@ namespace Vehicles
 				}
 				else if (this.HasBoat())
 				{
-					stringBuilder.Append("CaravanSailing".Translate());
+					stringBuilder.Append("VF_Sailing".Translate());
 				}
 				else
 				{
@@ -384,9 +461,9 @@ namespace Vehicles
 			}
 			if (vPather.Moving)
 			{
-				float num6 = CaravanArrivalTimeEstimator.EstimatedTicksToArrive(this, true) / 60000f;
+				float estimatedDaysToArrive = VehicleCaravanPathingHelper.EstimatedTicksToArrive(this, true) / 60000f;
 				stringBuilder.AppendLine();
-				stringBuilder.Append("CaravanEstimatedTimeToDestination".Translate(num6.ToString("0.#")));
+				stringBuilder.Append("CaravanEstimatedTimeToDestination".Translate(estimatedDaysToArrive.ToString("0.#")));
 			}
 			if (AllOwnersDowned)
 			{
@@ -457,6 +534,12 @@ namespace Vehicles
 		{
 			base.SpawnSetup();
 			vTweener.ResetTweenedPosToRoot();
+
+			//Necessary check for post load, otherwise registry will be null until spawned on map
+			foreach (VehiclePawn vehicle in Vehicles)
+			{
+				vehicle.RegisterEvents();
+			}
 		}
 
 		public override void Tick()

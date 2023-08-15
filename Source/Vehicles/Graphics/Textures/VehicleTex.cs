@@ -17,9 +17,15 @@ namespace Vehicles
 
 		public const string DefaultBoatIconTexPath = "UI/Icons/DefaultBoatIcon";
 
+		public static readonly Texture2D DraftVehicle = ContentFinder<Texture2D>.Get("UI/Gizmos/DraftVehicle");
+
+		public static readonly Texture2D HaltVehicle = ContentFinder<Texture2D>.Get("UI/Gizmos/HaltVehicle");
+
 		public static readonly Texture2D UnloadAll = ContentFinder<Texture2D>.Get("UI/Gizmos/UnloadAll");
 
 		public static readonly Texture2D UnloadPassenger = ContentFinder<Texture2D>.Get("UI/Gizmos/UnloadPawn");
+
+		public static readonly Texture2D UnloadIcon = ContentFinder<Texture2D>.Get("UI/Gizmos/UnloadArrow");
 
 		public static readonly Texture2D Anchor = ContentFinder<Texture2D>.Get("UI/Gizmos/Anchor");
 
@@ -65,11 +71,15 @@ namespace Vehicles
 
 		public static readonly List<Texture2D> FireIcons = ContentFinder<Texture2D>.GetAllInFolder("Things/Special/Fire").ToList();
 
+		public static readonly Texture2D WarningIcon = ContentFinder<Texture2D>.Get("UI/Icons/WarningIcon");
+
 		public static readonly Texture2D FullBarTex = SolidColorMaterials.NewSolidColorTexture(new Color(0.35f, 0.35f, 0.2f));
 
 		public static readonly Texture2D EmptyBarTex = SolidColorMaterials.NewSolidColorTexture(Color.black);
 
 		public static readonly Texture2D TargetLevelArrow = ContentFinder<Texture2D>.Get("UI/Misc/BarInstantMarkerRotated");
+
+		public static readonly Texture2D ConfigureFuelGauge = ContentFinder<Texture2D>.Get("UI/Gizmos/SetRefuelLevel");
 
 		public static readonly Texture2D SwitchLeft = ContentFinder<Texture2D>.Get("UI/ColorTools/SwitchLeft");
 
@@ -89,13 +99,15 @@ namespace Vehicles
 
 		public static readonly Texture2D ResetAll = ContentFinder<Texture2D>.Get("UI/Settings/ResetAll");
 
+		public static readonly Texture2D Settings = ContentFinder<Texture2D>.Get("UI/Settings/Settings");
+
 		public static readonly Texture2D ExportSettings = ContentFinder<Texture2D>.Get("UI/Settings/ExportSettings");
 
 		public static readonly Texture2D TradeCommandTex = ContentFinder<Texture2D>.Get("UI/Commands/Trade");
 
 		public static readonly Texture2D OfferGiftsCommandTex = ContentFinder<Texture2D>.Get("UI/Commands/OfferGifts");
 
-		public static readonly Texture2D AltitudeMeter = ContentFinder<Texture2D>.Get("UI/Gizmos/AltitudeMeter");
+		public static readonly Texture2D AltitudeMeter = null;// ContentFinder<Texture2D>.Get("UI/Gizmos/AltitudeMeter");
 
 		public static readonly Texture2D TradeArrow = ContentFinder<Texture2D>.Get("UI/Widgets/TradeArrow");
 
@@ -119,7 +131,11 @@ namespace Vehicles
 
 		public static readonly Material RangeCircle_Close = MaterialPool.MatFrom("UI/RangeField_Close", ShaderDatabase.MoteGlow);
 
+		public static readonly Texture2D DefaultVehicleIcon = ContentFinder<Texture2D>.Get(DefaultVehicleIconTexPath);
+
 		public static readonly Dictionary<VehicleDef, Texture2D> CachedTextureIcons = new Dictionary<VehicleDef, Texture2D>();
+
+		public static readonly Dictionary<VehicleDef, string> CachedTextureIconPaths = new Dictionary<VehicleDef, string>();
 
 		public static readonly Dictionary<(VehicleDef, Rot4), Texture2D> CachedVehicleTextures = new Dictionary<(VehicleDef, Rot4), Texture2D>();
 
@@ -130,7 +146,7 @@ namespace Vehicles
 		static VehicleTex()
 		{
 			StringBuilder tasks = new StringBuilder();
-			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefs)
+			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefsListForReading)
 			{
 				tasks.Clear();
 				tasks.AppendLine($"Generating TextureCache for {vehicleDef.defName}");
@@ -171,11 +187,12 @@ namespace Vehicles
 						else
 						{
 							tex = ContentFinder<Texture2D>.Get(iconFilePath);
-							cachedTextureFilepaths.Add(iconFilePath, tex);
+							cachedTextureFilepaths[iconFilePath] = tex;
 						}
 						tasks.AppendLine("Finalizing caching");
-						CachedGraphics.Add(vehicleDef, graphic);
-						CachedTextureIcons.Add(vehicleDef, tex);
+						CachedGraphics[vehicleDef] = graphic;
+						CachedTextureIcons[vehicleDef] = tex;
+						CachedTextureIconPaths[vehicleDef] = iconFilePath;
 					}
 					else
 					{

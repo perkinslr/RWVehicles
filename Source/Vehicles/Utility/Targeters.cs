@@ -12,6 +12,9 @@ namespace Vehicles
 		private static readonly List<BaseTargeter> targeters = new List<BaseTargeter>();
 		private static readonly List<BaseWorldTargeter> worldTargeters = new List<BaseWorldTargeter>();
 
+		public static BaseTargeter CurrentTargeter { get; private set; }
+		public static BaseWorldTargeter CurrentWorldTargeter { get; private set; }
+
 		static Targeters()
 		{
 			foreach (Type type in typeof(BaseTargeter).InstantiableDescendantsAndSelf())
@@ -28,7 +31,19 @@ namespace Vehicles
 			}
 		}
 
-		public static void OnGUITargeters()
+		/* ------ Map Targeters ------ */
+		internal static void StopAllTargeters()
+		{
+			foreach (BaseTargeter targeter in targeters)
+			{
+				if (targeter.IsTargeting)
+				{
+					targeter.StopTargeting();
+				}
+			}
+		}
+
+		internal static void OnGUITargeters()
 		{
 			foreach (BaseTargeter targeter in targeters)
 			{
@@ -39,7 +54,7 @@ namespace Vehicles
 			}
 		}
 
-		public static void UpdateTargeters()
+		internal static void UpdateTargeters()
 		{
 			foreach (BaseTargeter targeter in targeters)
 			{
@@ -50,7 +65,7 @@ namespace Vehicles
 			}
 		}
 
-		public static void ProcessTargeterInputEvents()
+		internal static void ProcessTargeterInputEvents()
 		{
 			foreach (BaseTargeter targeter in targeters)
 			{
@@ -60,8 +75,21 @@ namespace Vehicles
 				}
 			}
 		}
+		/* --------------------------- */
 
-		public static void OnGUIWorldTargeters()
+		/* ----- World Targeters ----- */
+		internal static void StopAllWorldTargeters()
+		{
+			foreach (BaseWorldTargeter targeter in worldTargeters)
+			{
+				if (targeter.IsTargeting)
+				{
+					targeter.StopTargeting();
+				}
+			}
+		}
+
+		internal static void OnGUIWorldTargeters()
 		{
 			foreach (BaseWorldTargeter targeter in worldTargeters)
 			{
@@ -72,7 +100,7 @@ namespace Vehicles
 			}
 		}
 
-		public static void UpdateWorldTargeters()
+		internal static void UpdateWorldTargeters()
 		{
 			foreach (BaseWorldTargeter targeter in worldTargeters)
 			{
@@ -83,7 +111,7 @@ namespace Vehicles
 			}
 		}
 
-		public static void ProcessWorldTargeterInputEvents()
+		internal static void ProcessWorldTargeterInputEvents()
 		{
 			foreach (BaseWorldTargeter targeter in worldTargeters)
 			{
@@ -93,5 +121,6 @@ namespace Vehicles
 				}
 			}
 		}
+		/* --------------------------- */
 	}
 }

@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Linq;
 using UnityEngine;
 using HarmonyLib;
 using Verse;
 using RimWorld;
+using SmashTools;
 
 namespace Vehicles
 {
@@ -25,14 +27,35 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Projectile), "Impact"),
 				prefix: new HarmonyMethod(typeof(Combat),
 				nameof(RegisterImpactCell)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Projectile), "ImpactSomething"),
+				transpiler: new HarmonyMethod(typeof(Combat),
+				nameof(VehicleProjectileChanceToHit)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Thing), nameof(Thing.Destroy)),
 				prefix: new HarmonyMethod(typeof(Combat),
 				nameof(ProjectileMapToWorld)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Projectile), "CheckForFreeIntercept"),
+				transpiler: new HarmonyMethod(typeof(Combat),
+				nameof(VehicleProjectileInterceptor)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Explosion), "AffectCell"),
+				prefix: new HarmonyMethod(typeof(Combat),
+				nameof(AffectVehicleInCell)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(DamageWorker), "ExplosionDamageThing"),
+				postfix: new HarmonyMethod(typeof(Combat),
+				nameof(VehicleMultipleExplosionInstances)),
+				transpiler: new HarmonyMethod(typeof(Combat),
+				nameof(VehicleExplosionDamageTranspiler)));
 		}
 
+		/// <summary>
+		/// If projectile has <see cref="CompTurretProjectileProperties"/> override total ticks to impact for speed readjustment
+		/// </summary>
+		/// <param name="__instance"></param>
+		/// <param name="__result"></param>
+		/// <param name="___origin"></param>
+		/// <param name="___destination"></param>
 		public static void StartingTicksFromTurret(Projectile __instance, ref float __result, Vector3 ___origin, Vector3 ___destination)
 		{
-			if (__instance.AllComps.FirstOrDefault(c => c is CompTurretProjectileProperties) is CompTurretProjectileProperties comp)
+			if (__instance.TryGetComp<CompTurretProjectileProperties>() is CompTurretProjectileProperties comp)
 			{
 				float num = (___origin - ___destination).magnitude / (comp.speed / 100);
 				if (num <= 0f)
@@ -43,17 +66,29 @@ namespace Vehicles
 			}
 		}
 
+		/// <summary>
+		/// If projectile has <see cref="CompTurretProjectileProperties"/> override <see cref="ProjectileHitFlags"/>
+		/// </summary>
+		/// <param name="__instance"></param>
+		/// <param name="__result"></param>
 		public static void OverriddenHitFlags(Projectile __instance, ref ProjectileHitFlags __result)
 		{
-			if (__instance.AllComps.FirstOrDefault(c => c is CompTurretProjectileProperties) is CompTurretProjectileProperties comp && comp.hitflag.HasValue)
+			if (__instance.TryGetComp<CompTurretProjectileProperties>() is CompTurretProjectileProperties comp && comp.hitflag.HasValue)
 			{
 				__result = comp.hitflag.Value;
 			}
 		}
 
+		/// <summary>
+		/// Enforces behavior from <see cref="CompTurretProjectileProperties"/> where overridden hit flags should determine valid Things for interception
+		/// </summary>
+		/// <param name="thing"></param>
+		/// <param name="__instance"></param>
+		/// <param name="___launcher"></param>
+		/// <param name="__result"></param>
 		public static bool TurretHitFlags(Thing thing, Projectile __instance, Thing ___launcher, ref bool __result)
 		{
-			if (__instance.AllComps.FirstOrDefault(c => c is CompTurretProjectileProperties) is CompTurretProjectileProperties comp)
+			if (__instance.TryGetComp<CompTurretProjectileProperties>() is CompTurretProjectileProperties comp)
 			{
 				if (!thing.Spawned)
 				{
@@ -138,12 +173,120 @@ namespace Vehicles
 			}
 		}
 
+		public static IEnumerable<CodeInstruction> VehicleProjectileChanceToHit(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.opcode == OpCodes.Stloc_S && instruction.operand is LocalBuilder localBuilder && localBuilder.LocalIndex == 8)
+				{
+					yield return instruction; //Stloc_S : 8
+					instruction = instructionList[++i];
+					yield return instruction; //Ldloc_S : 8
+					instruction = instructionList[++i];
+					yield return new CodeInstruction(opcode: OpCodes.Call, AccessTools.Method(typeof(Combat), nameof(VehiclePawnFillageInterceptReroute)));
+				}
+
+				yield return instruction;
+			}
+		}
+
 		public static void ProjectileMapToWorld(Thing __instance, DestroyMode mode = DestroyMode.Vanish)
 		{
 			if (__instance is Projectile projectile && projectile.GetComp<CompProjectileExitMap>() is CompProjectileExitMap exitMap)
 			{
 				exitMap.LeaveMap();
 			}
+		}
+
+		public static IEnumerable<CodeInstruction> VehicleProjectileInterceptor(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.opcode == OpCodes.Stloc_S && instruction.operand is LocalBuilder localBuilder && localBuilder.LocalIndex == 7)
+				{
+					yield return instruction; //Stloc_S : 7
+					instruction = instructionList[++i];
+					yield return instruction; //Ldloc_S : 7
+					instruction = instructionList[++i];
+					yield return new CodeInstruction(opcode: OpCodes.Call, AccessTools.Method(typeof(Combat), nameof(VehiclePawnFillageInterceptReroute)));
+				}
+
+				yield return instruction;
+			}
+		}
+
+		public static bool AffectVehicleInCell(Explosion __instance, IntVec3 c)
+		{
+			if (__instance.Map.GetCachedMapComponent<VehiclePositionManager>().ClaimedBy(c) is VehiclePawn vehicle)
+			{
+				//If cell is not on edge of vehicle, block explosion
+				return vehicle.OccupiedRect().EdgeCells.Contains(c);
+			}
+			return true;
+		}
+
+		public static void VehicleMultipleExplosionInstances(Thing t, ref List<Thing> damagedThings, List<Thing> ignoredThings, IntVec3 cell)
+		{
+			if (t is VehiclePawn vehicle)
+			{
+				if (ignoredThings != null && ignoredThings.Contains(t))
+				{
+					return;
+				}
+				damagedThings.Remove(vehicle);
+			}
+		}
+
+		public static IEnumerable<CodeInstruction> VehicleExplosionDamageTranspiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilg)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+			MethodInfo takeDamageMethod = AccessTools.Method(typeof(Thing), nameof(Thing.TakeDamage));
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.Calls(takeDamageMethod))
+				{
+					//Clear stack for rerouted call
+					yield return new CodeInstruction(opcode: OpCodes.Pop); //ldarg.2 : thing
+					yield return new CodeInstruction(opcode: OpCodes.Pop); //ldloc.1 : dinfo
+
+					yield return new CodeInstruction(opcode: OpCodes.Ldloc_1); //dinfo
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_2); //thing
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_S, 5); //cell
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(Combat), nameof(Combat.TakeDamageReroute)));
+
+					instruction = instructionList[++i];
+				}
+				yield return instruction;
+			}
+		}
+
+		private static DamageWorker.DamageResult TakeDamageReroute(DamageInfo dinfo, Thing thing, IntVec3 cell)
+		{
+			if (thing is VehiclePawn vehicle && vehicle.TryTakeDamage(dinfo, cell, out var result))
+			{
+				return result;
+			}
+			return thing.TakeDamage(dinfo);
+		}
+
+		private static Pawn VehiclePawnFillageInterceptReroute(Pawn pawn)
+		{
+			if (pawn is VehiclePawn)
+			{
+				//if pawn is vehicle, assign back to null to avoid "stance" based interception chance, and fall through to fillage.
+				return null;
+			}
+			return pawn;
 		}
 	}
 }

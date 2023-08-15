@@ -18,15 +18,13 @@ namespace Vehicles
 
 		public void PatchMethods()
 		{
-			VehicleHarmony.Patch(original: AccessTools.Property(typeof(MapPawns), nameof(MapPawns.FreeColonistsSpawnedOrInPlayerEjectablePodsCount)).GetGetMethod(), prefix: null,
-				postfix: new HarmonyMethod(typeof(Extra),
-				nameof(FreeColonistsInVehiclesTransport)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(MapPawns), nameof(MapPawns.FreeHumanlikesSpawnedOfFaction)), prefix: null,
-				postfix: new HarmonyMethod(typeof(Extra),
-				nameof(FreeHumanlikesSpawnedInVehicles)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(MapPawns), nameof(MapPawns.FreeHumanlikesOfFaction)), prefix: null,
-				postfix: new HarmonyMethod(typeof(Extra),
-				nameof(FreeHumanlikesInVehicles)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(MapPawns), "PlayerEjectablePodHolder"),
+				prefix: new HarmonyMethod(typeof(Extra),
+				nameof(PlayerEjectableVehicles)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn), nameof(Pawn.GetChildHolders)),
+				prefix: new HarmonyMethod(typeof(Extra),
+				nameof(GetVehicleHandlerIThingHolders)));
+
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Selector), "HandleMapClicks"),
 				prefix: new HarmonyMethod(typeof(Extra),
 				nameof(MultiSelectFloatMenu)));
@@ -36,9 +34,6 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Projectile_Explosive), "Impact"),
 				prefix: new HarmonyMethod(typeof(Extra),
 				nameof(ShellsImpactWater)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(WindowStack), nameof(WindowStack.Notify_ClickedInsideWindow)),
-				prefix: new HarmonyMethod(typeof(Extra),
-				nameof(HandleSingleWindowDialogs)));
 			VehicleHarmony.Patch(original: AccessTools.PropertyGetter(typeof(TickManager), nameof(TickManager.Paused)),
 				postfix: new HarmonyMethod(typeof(Extra),
 				nameof(PausedFromVehicles)));
@@ -49,41 +44,38 @@ namespace Vehicles
 				transpiler: new HarmonyMethod(typeof(Extra),
 				nameof(VehicleAreaRowTranspiler)));
 
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PawnCapacitiesHandler), nameof(PawnCapacitiesHandler.Notify_CapacityLevelsDirty)),
+				prefix: new HarmonyMethod(typeof(Extra),
+				nameof(RecheckVehicleHandlerCapacities)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn), nameof(Pawn.Kill)),
                 prefix: new HarmonyMethod(typeof(Extra), 
 				nameof(MoveOnDeath)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PawnUtility), nameof(PawnUtility.ShouldSendNotificationAbout)),
                 postfix: new HarmonyMethod(typeof(Extra), 
 				nameof(SendNotificationsVehicle)));
-
 		}
 
-		public static void FreeColonistsInVehiclesTransport(ref int __result, List<Pawn> ___pawnsSpawned)
+		public static bool PlayerEjectableVehicles(Thing thing, ref IThingHolder __result)
 		{
-			List<VehiclePawn> vehicles = ___pawnsSpawned.Where(x => x is VehiclePawn vehicle && x.Faction == Faction.OfPlayer).Cast<VehiclePawn>().ToList();
-			
-			foreach(VehiclePawn vehicle in vehicles)
+			if (thing is VehiclePawn vehicle)
 			{
-				if(vehicle.AllPawnsAboard.NotNullAndAny(x => !x.Dead))
-					__result += vehicle.AllPawnsAboard.Count;
+				__result = vehicle;
+				return false;
 			}
+			return true;
 		}
 
-		public static void FreeHumanlikesSpawnedInVehicles(Faction faction, ref List<Pawn> __result, MapPawns __instance)
+		public static void GetVehicleHandlerIThingHolders(Pawn __instance, List<IThingHolder> outChildren)
 		{
-			List<Pawn> innerPawns = __instance.SpawnedPawnsInFaction(faction).Where(p => p is VehiclePawn).SelectMany(v => (v as VehiclePawn).AllPawnsAboard).ToList();
-			__result.AddRange(innerPawns);
-		}
-
-		public static void FreeHumanlikesInVehicles(Faction faction, ref List<Pawn> __result, MapPawns __instance)
-		{
-			List<Pawn> innerPawns = __instance.AllPawns.Where(p => p.Faction == faction && p is VehiclePawn).SelectMany(v => (v as VehiclePawn).AllPawnsAboard).ToList();
-			__result.AddRange(innerPawns);
+			if (__instance is VehiclePawn vehicle && !vehicle.handlers.NullOrEmpty())
+			{
+				outChildren.AddRange(vehicle.handlers);
+			}
 		}
 
 		public static bool MultiSelectFloatMenu(List<object> ___selected)
 		{
-			if(Event.current.type == EventType.MouseDown)
+			if (Event.current.type == EventType.MouseDown)
 			{
 				if(Event.current.button == 1 && ___selected.Count > 0)
 				{
@@ -98,13 +90,12 @@ namespace Vehicles
 
 		public static void ManhunterDontAttackVehicles(Thing t, ref bool __result)
 		{
-			if(__result is true && t is VehiclePawn vehicle && !SettingsCache.TryGetValue(vehicle.VehicleDef, typeof(VehicleProperties), "manhunterTargetsVehicle", vehicle.VehicleDef.properties.manhunterTargetsVehicle))
+			if (__result is true && t is VehiclePawn vehicle && !SettingsCache.TryGetValue(vehicle.VehicleDef, typeof(VehicleProperties), nameof(VehicleProperties.manhunterTargetsVehicle), vehicle.VehicleDef.properties.manhunterTargetsVehicle))
 			{
 				__result = false;
 			}
 		}
 
-		//REDO
 		/// <summary>
 		/// Shells impacting water now have reduced radius of effect and different sound
 		/// </summary>
@@ -120,20 +111,6 @@ namespace Vehicles
 				return false;
 			}
 			return true;
-		}
-
-		public static void HandleSingleWindowDialogs(Window window, WindowStack __instance)
-		{
-			if (Event.current.type == EventType.MouseDown)
-			{
-				if (window is null || (!window.GetType().IsAssignableFrom(typeof(SingleWindow)) && (__instance.GetWindowAt(Verse.UI.GUIToScreenPoint(Event.current.mousePosition)) != SingleWindow.CurrentlyOpenedWindow)))
-				{
-					if (SingleWindow.CurrentlyOpenedWindow != null && SingleWindow.CurrentlyOpenedWindow.closeOnAnyClickOutside)
-					{
-						Find.WindowStack.TryRemove(SingleWindow.CurrentlyOpenedWindow);
-					}
-				}
-			}
 		}
 
 		public static void PausedFromVehicles(ref bool __result)
@@ -218,14 +195,27 @@ namespace Vehicles
 			}
 		}
 
+		public static void RecheckVehicleHandlerCapacities(Pawn ___pawn)
+		{
+			if (___pawn.GetVehicle() is VehiclePawn vehicle)
+			{
+				//Null check for initial pawn capacities dirty caching when VehiclePawn has not yet called SpawnSetup
+				vehicle.EventRegistry?[VehicleEventDefOf.PawnCapacitiesDirty].ExecuteEvents();
+			}
+		}
+
 		public static void MoveOnDeath(Pawn __instance)
         {
             if (__instance.IsInVehicle())
             {
-                var vehicle = __instance.GetVehicle();
-                vehicle.inventory.innerContainer.TryAddOrTransfer(__instance);
-				Find.WorldPawns.RemovePawn(__instance);
-            }
+                VehiclePawn vehicle = __instance.GetVehicle();
+                vehicle.AddOrTransfer(__instance);
+				if (Find.World.worldPawns.Contains(__instance))
+				{
+					Find.WorldPawns.RemovePawn(__instance);
+				}
+				vehicle.EventRegistry[VehicleEventDefOf.PawnKilled].ExecuteEvents();
+			}
         }
 
         public static void SendNotificationsVehicle(Pawn p, ref bool __result)

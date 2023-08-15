@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using HarmonyLib;
@@ -33,6 +34,10 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(BuildCopyCommandUtility), nameof(BuildCopyCommandUtility.BuildCopyCommand)),
 				prefix: new HarmonyMethod(typeof(Gizmos),
 				nameof(VehicleMaterialOnCopyBuildGizmo)));
+
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Dialog_InfoCard), nameof(Dialog_InfoCard.DoWindowContents)),
+				prefix: new HarmonyMethod(typeof(Gizmos),
+				nameof(VehicleInfoCardOverride)));
 		}
 
 		/// <summary>
@@ -43,23 +48,29 @@ namespace Vehicles
 		/// <param name="__instance"></param>
 		public static void NoAttackSettlementWhenDocked(Caravan caravan, ref IEnumerable<Gizmo> __result, Settlement __instance)
 		{
-			if (caravan.HasBoat() && !caravan.pather.Moving)
+			if (caravan is VehicleCaravan vehicleCaravan && vehicleCaravan.HasBoat() && !vehicleCaravan.vPather.Moving)
 			{
 				List<Gizmo> gizmos = __result.ToList();
 				if (caravan.PawnsListForReading.NotNullAndAny(p => !p.IsBoat()))
 				{
 					int index = gizmos.FindIndex(x => (x as Command_Action).icon == Settlement.AttackCommand);
 					if (index >= 0 && index < gizmos.Count)
-						gizmos[index].Disable("CommandAttackDockDisable".Translate(__instance.LabelShort));
+					{
+						gizmos[index].Disable("VF_CommandAttackDockDisable".Translate(__instance.LabelShort));
+					}
 				}
 				else
 				{
 					int index2 = gizmos.FindIndex(x => (x as Command_Action).icon == ContentFinder<Texture2D>.Get("UI/Commands/Trade", false));
 					if (index2 >= 0 && index2 < gizmos.Count)
-						gizmos[index2].Disable("CommandTradeDockDisable".Translate(__instance.LabelShort));
+					{
+						gizmos[index2].Disable("VF_CommandTradeDockDisable".Translate(__instance.LabelShort));
+					}
 					int index3 = gizmos.FindIndex(x => (x as Command_Action).icon == ContentFinder<Texture2D>.Get("UI/Commands/OfferGifts", false));
 					if (index3 >= 0 && index3 < gizmos.Count)
-						gizmos[index3].Disable("CommandTradeDockDisable".Translate(__instance.LabelShort));
+					{
+						gizmos[index3].Disable("VF_CommandTradeDockDisable".Translate(__instance.LabelShort));
+					}
 				}
 				__result = gizmos;
 			}
@@ -110,12 +121,11 @@ namespace Vehicles
 				{
 					yield return new Command_Action()
 					{
-						defaultLabel = "CommandFormVehicleCaravan".Translate(),
-						defaultDesc = "CommandFormVehicleCaravanDesc".Translate(),
+						defaultLabel = "VF_CommandFormVehicleCaravan".Translate(),
+						defaultDesc = "VF_CommandFormVehicleCaravanDesc".Translate(),
 						icon = VehicleTex.FormCaravanVehicle,
 						action = delegate ()
 						{
-							Find.Tutor.learningReadout.TryActivateConcept(ConceptDefOf.FormCaravan);
 							Find.WindowStack.Add(new Dialog_FormVehicleCaravan(mapParent.Map));
 						}
 					};
@@ -124,8 +134,8 @@ namespace Vehicles
 				{
 					Command_Action command_Action = new Command_Action
 					{
-						defaultLabel = "CommandReformVehicleCaravan".Translate(),
-						defaultDesc = "CommandReformVehicleCaravanDesc".Translate(),
+						defaultLabel = "VF_CommandReformVehicleCaravan".Translate(),
+						defaultDesc = "VF_CommandReformVehicleCaravanDesc".Translate(),
 						icon = VehicleTex.FormCaravanVehicle,
 						hotKey = KeyBindingDefOf.Misc2,
 						action = delegate ()
@@ -220,10 +230,10 @@ namespace Vehicles
 
 		public static bool VehicleMaterialOnBuildGizmo(Vector2 topLeft, float maxWidth, BuildableDef ___entDef, ref GizmoResult __result, Designator_Build __instance)
 		{
-			if (___entDef is VehicleBuildDef def && def.thingToSpawn.graphicData.Graphic.Shader.SupportsRGBMaskTex())
+			if (___entDef is VehicleBuildDef def)
 			{
 				float width = __instance.GetWidth(maxWidth);
-				__result = RenderHelper.GizmoOnGUIWithMaterial(__instance, new Rect(topLeft.x, topLeft.y, width, width), def);
+				__result = VehicleGUI.GizmoOnGUIWithMaterial(__instance, new Rect(topLeft.x, topLeft.y, width, width), def);
 				if (def.MadeFromStuff)
 				{
 					Designator_Dropdown.DrawExtraOptionsIcon(topLeft, __instance.GetWidth(maxWidth));
@@ -251,7 +261,7 @@ namespace Vehicles
 				{
 					SoundDefOf.Tick_Tiny.PlayOneShotOnCamera(null);
 					Find.DesignatorManager.Select(des);
-					des.SetStuffDefTemporary(stuff);
+					des.SetStuffDef(stuff);
 				};
 				command_Action.defaultLabel = "CommandBuildCopy".Translate();
 				command_Action.defaultDesc = "CommandBuildCopyDesc".Translate();
@@ -263,7 +273,7 @@ namespace Vehicles
 				command_Action.iconTexCoords = des.iconTexCoords;
 				command_Action.iconAngle = des.iconAngle;
 				command_Action.iconOffset = des.iconOffset;
-				command_Action.order = 10f;
+				command_Action.Order = 10f;
 				command_Action.buildDef = buildDef;
 				command_Action.SetColorOverride(des.IconDrawColor);
 				des.SetStuffDef(stuffDefRaw);
@@ -278,6 +288,26 @@ namespace Vehicles
 				command_Action.hotKey = KeyBindingDefOf.Misc11;
 
 				__result = command_Action;
+				return false;
+			}
+			return true;
+		}
+
+		public static bool VehicleInfoCardOverride(Rect inRect, Thing ___thing, ThingDef ___def)
+		{
+			if (___def is VehicleBuildDef buildDef)
+			{
+				VehicleInfoCard.DrawFor(inRect, buildDef.thingToSpawn);
+				return false;
+			}
+			else if (___thing is VehicleBuilding building)
+			{
+				VehicleInfoCard.DrawFor(inRect, building.VehicleDef);
+				return false;
+			}
+			else if (___thing is VehiclePawn vehicle)
+			{
+				VehicleInfoCard.DrawFor(inRect, vehicle);
 				return false;
 			}
 			return true;

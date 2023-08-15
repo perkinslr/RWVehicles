@@ -1,14 +1,15 @@
 ﻿using System;
 using System.Globalization;
+using Verse;
 using SmashTools;
 
 namespace Vehicles
 {
-	[HeaderTitle(Label = "VehicleJobLimitations", Translate = true)]
+	[HeaderTitle(Label = "VF_JobLimitations", Translate = true)]
 	public struct VehicleJobLimitations
 	{
 		public string defName;
-		[PostToSettings(Label = "VehicleMaxWorkers", Translate = true)]
+		[PostToSettings(Label = "VF_MaxWorkers", Translate = true)]
 		public int maxWorkers;
 
 		public VehicleJobLimitations(string defName, int maxWorkers)
@@ -16,6 +17,8 @@ namespace Vehicles
 			this.defName = defName;
 			this.maxWorkers = maxWorkers;
 		}
+
+		public bool IsValid => !defName.NullOrEmpty();
 
 		public static VehicleJobLimitations Invalid => new VehicleJobLimitations(string.Empty, 0);
 

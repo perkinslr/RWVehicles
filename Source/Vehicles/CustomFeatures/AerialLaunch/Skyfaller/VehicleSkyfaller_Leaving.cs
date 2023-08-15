@@ -8,7 +8,6 @@ using UnityEngine;
 
 namespace Vehicles
 {
-	//REDO - CACHE LAUNCH PROTOCOL
 	public class VehicleSkyfaller_Leaving : VehicleSkyfaller
 	{
 		public AerialVehicleArrivalAction arrivalAction;
@@ -23,8 +22,7 @@ namespace Vehicles
 
 		public override void DrawAt(Vector3 drawLoc, bool flip = false)
 		{
-			skyfallerLoc = vehicle.CompVehicleLauncher.launchProtocol.AnimateTakeoff(drawLoc.y, flip);
-			vehicle.CompVehicleLauncher.launchProtocol.DrawAdditionalLaunchTextures(drawLoc.y);
+			(launchProtocolDrawPos, _) = vehicle.CompVehicleLauncher.launchProtocol.Draw(RootPos, 0);
 			DrawDropSpotShadow();
 		}
 
@@ -34,7 +32,7 @@ namespace Vehicles
 			if (delayLaunchingTicks <= 0)
 			{
 				base.Tick();
-				if (vehicle.CompVehicleLauncher.launchProtocol.FinishedTakeoff(this))
+				if (vehicle.CompVehicleLauncher.launchProtocol.FinishedAnimation(this))
 				{
 					LeaveMap();
 				}
@@ -43,6 +41,7 @@ namespace Vehicles
 
 		protected override void LeaveMap()
 		{
+			vehicle.CompVehicleLauncher.launchProtocol.Release();
 			if (!createWorldObject)
 			{
 				base.LeaveMap();
@@ -58,21 +57,20 @@ namespace Vehicles
 					return;
 				}
 			}
-			Messages.Message($"{vehicle.LabelShort} LEFT", MessageTypeDefOf.PositiveEvent);
+			if (vehicle.Faction.IsPlayer)
+			{
+				Messages.Message("VF_AerialVehicleLeft".Translate(vehicle.LabelShort), MessageTypeDefOf.PositiveEvent);
+			}
 			if (createWorldObject)
 			{
-				AerialVehicleInFlight flyingVehicle = (AerialVehicleInFlight)WorldObjectMaker.MakeWorldObject(WorldObjectDefOfVehicles.AerialVehicle);
-				flyingVehicle.vehicle = vehicle;
-				flyingVehicle.Tile = Map.Tile;
-				flyingVehicle.SetFaction(vehicle.Faction);
-				flyingVehicle.OrderFlyToTiles(new List<FlightNode>(flightPath), WorldHelper.GetTilePos(Map.Tile), arrivalAction);
+				AerialVehicleInFlight aerialVehicle = AerialVehicleInFlight.Create(vehicle, Map.Tile);
+				aerialVehicle.OrderFlyToTiles(new List<FlightNode>(flightPath), WorldHelper.GetTilePos(Map.Tile), arrivalAction);
 				if (orderRecon)
 				{
-					flyingVehicle.flightPath.ReconCircleAt(flightPath.LastOrDefault().tile);
+					aerialVehicle.flightPath.ReconCircleAt(flightPath.LastOrDefault().tile);
 				}
-				flyingVehicle.Initialize();
-				Find.WorldObjects.Add(flyingVehicle);
 			}
+			vehicle.EventRegistry[VehicleEventDefOf.AerialVehicleLeftMap].ExecuteEvents();
 			Destroy(DestroyMode.Vanish);
 		}
 
@@ -81,9 +79,9 @@ namespace Vehicles
 			base.SpawnSetup(map, respawningAfterLoad);
 			if (!respawningAfterLoad)
 			{
-				vehicle.CompVehicleLauncher.launchProtocol.SetPositionLeaving(new Vector3(DrawPos.x, DrawPos.y + 1, DrawPos.z), Rotation, map);
-				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(false);
-				delayLaunchingTicks = vehicle.CompVehicleLauncher.launchProtocol.launchProperties.delayByTicks;
+				vehicle.CompVehicleLauncher.launchProtocol.Prepare(map, Position, Rotation);
+				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(LaunchProtocol.LaunchType.Takeoff);
+				delayLaunchingTicks = vehicle.CompVehicleLauncher.launchProtocol.CurAnimationProperties.delayByTicks;
 			}
 		}
 

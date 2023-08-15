@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Collections.Generic;
 using Verse;
 using RimWorld;
@@ -11,60 +12,30 @@ namespace Vehicles
 	{
 		public ThingOwner<Pawn> handlers;
 
+		private string roleKey;
 		public VehicleRole role;
-
-		private List<Pawn> tempSavedPawns = new List<Pawn>();
 
 		public int uniqueID = -1;
 		public VehiclePawn vehicle;
-		
+
 		public VehicleHandler()
 		{
 			if (handlers is null)
 			{
-				handlers = new ThingOwner<Pawn>(this, false, LookMode.Reference);
+				handlers = new ThingOwner<Pawn>(this, false, LookMode.Deep);
 			}
 		}
 
-		public VehicleHandler(VehiclePawn vehicle)
+		public VehicleHandler(VehiclePawn vehicle) : this()
 		{
 			uniqueID = VehicleIdManager.Instance.GetNextHandlerId();
 			this.vehicle = vehicle;
-			if (handlers is null)
-			{
-				handlers = new ThingOwner<Pawn>(this, false, LookMode.Reference);
-			}
 		}
 
-		public VehicleHandler(VehiclePawn vehicle, VehicleRole newRole)
+		public VehicleHandler(VehiclePawn vehicle, VehicleRole newRole) : this(vehicle)
 		{
-			List<Pawn> newHandlers = new List<Pawn>();
-			uniqueID = VehicleIdManager.Instance.GetNextHandlerId();
-			this.vehicle = vehicle;
 			role = new VehicleRole(newRole);
-			if (handlers is null)
-			{
-				handlers = new ThingOwner<Pawn>(this, false, LookMode.Reference);
-			}
-			if ((newHandlers?.Count ?? 0) > 0)
-			{
-				foreach (Pawn p in newHandlers)
-				{
-					if (p.Spawned) 
-					{ 
-						p.DeSpawn(); 
-					}
-					if (p.holdingOwner != null) 
-					{ 
-						p.holdingOwner = null; 
-					}
-					if (!p.IsWorldPawn()) 
-					{ 
-						Find.WorldPawns.PassToWorld(p, PawnDiscardDecideMode.Decide); 
-					}
-				}
-				handlers.TryAddRangeOrTransfer(newHandlers);
-			}
+			roleKey = role.key;
 		}
 
 		public IThingHolder ParentHolder => vehicle;
@@ -73,9 +44,28 @@ namespace Vehicles
 
 		public Rot4 PawnRotation => role.pawnRenderer?.RotFor(vehicle.FullRotation) ?? Rot4.South;
 
-		public bool RequiredForMovement => role.handlingTypes.NotNullAndAny(h => h.HasFlag(HandlingTypeFlags.Movement));
+		public bool RequiredForMovement => role.handlingTypes.HasFlag(HandlingTypeFlags.Movement);
 
-		public bool RoleFulfilled => role != null && handlers.Count >= role.slotsToOperate;
+		public bool RoleFulfilled
+		{
+			get
+			{
+				bool minRequirement = role != null && handlers.Count >= role.slotsToOperate;
+				if (!minRequirement)
+				{
+					return false;
+				}
+				int operationalCount = 0;
+				foreach (Pawn pawn in handlers)
+				{
+					if (CanOperateRole(pawn))
+					{
+						operationalCount++;
+					}
+				}
+				return operationalCount >= role.slotsToOperate;
+			}
+		}
 
 		public bool AreSlotsAvailable
 		{
@@ -86,13 +76,37 @@ namespace Vehicles
 			}
 		}
 
-		public static bool operator ==(VehicleHandler obj1, VehicleHandler obj2) => obj1?.Equals(obj2) ?? (obj1 is null && obj2 is null);
+		public static bool operator ==(VehicleHandler lhs, VehicleHandler rhs)
+		{
+			if (lhs is null)
+			{
+				return rhs is null;
+			}
+			return lhs.Equals(rhs);
+		}
 
-		public static bool operator !=(VehicleHandler obj1, VehicleHandler obj2) => !(obj1 == obj2);
+		public static bool operator !=(VehicleHandler lhs, VehicleHandler rhs)
+		{
+			return !(lhs == rhs);
+		}
+
+		public static bool operator ==(VehicleHandler lhs, IThingHolder rhs)
+		{
+			if (!(rhs is VehicleHandler handler))
+			{
+				return false;
+			}
+			return lhs == handler;
+		}
+
+		public static bool operator !=(VehicleHandler lhs, IThingHolder rhs)
+		{
+			return !(lhs == rhs);
+		}
 
 		public bool CanOperateRole(Pawn pawn)
 		{
-			if (!role.handlingTypes.NullOrEmpty())
+			if (role.handlingTypes > HandlingTypeFlags.None)
 			{
 				bool manipulation = pawn.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation);
 				bool downed = pawn.Downed;
@@ -115,6 +129,11 @@ namespace Vehicles
 			}
 		}
 
+		public void Tick()
+		{
+			handlers.ThingOwnerTick();
+		}
+
 		public override bool Equals(object obj)
 		{
 			return obj is VehicleHandler handler && Equals(handler);
@@ -122,12 +141,12 @@ namespace Vehicles
 
 		public bool Equals(VehicleHandler obj2)
 		{
-			return obj2?.role.key == role.key;
+			return obj2?.roleKey == roleKey;
 		}
 
 		public override string ToString()
 		{
-			return role.label;
+			return roleKey;
 		}
 
 		public override int GetHashCode()
@@ -152,31 +171,24 @@ namespace Vehicles
 
 		public void ExposeData()
 		{
-			Scribe_Values.Look(ref uniqueID, "uniqueID", -1);
-			Scribe_References.Look(ref vehicle, "vehicle", true);
-			Scribe_Deep.Look(ref role, "role");
+			Scribe_Values.Look(ref uniqueID, nameof(uniqueID), -1);
+			Scribe_References.Look(ref vehicle, nameof(vehicle), true);
+			Scribe_Values.Look(ref roleKey, nameof(role), forceSave: true);
 
 			if (Scribe.mode == LoadSaveMode.Saving)
 			{
-				tempSavedPawns.Clear();
-				tempSavedPawns.AddRange(handlers.InnerListForReading);
-				handlers.RemoveAll(x => x is Pawn);
-				handlers.RemoveAll(x => x.Destroyed);
+				//Deep save if inner pawns are not world pawns, as they will not be saved in the WorldPawns list
+				handlers.contentsLookMode = (handlers.InnerListForReading.FirstOrDefault()?.IsWorldPawn() ?? false) ? LookMode.Reference : LookMode.Deep;
 			}
-
-			Scribe_Collections.Look(ref tempSavedPawns, "tempSavedPawns", LookMode.Reference);
-			Scribe_Deep.Look(ref handlers, "handlers", new object[]
+			Scribe_Deep.Look(ref handlers, nameof(handlers), new object[] { this });
+			
+			if (Scribe.mode == LoadSaveMode.ResolvingCrossRefs)
 			{
-				this
-			});
-
-			if (Scribe.mode == LoadSaveMode.PostLoadInit || Scribe.mode == LoadSaveMode.Saving)
-			{
-				for (int j = 0; j < tempSavedPawns.Count; j++)
+				role = vehicle.VehicleDef.properties.roles.FirstOrDefault(role => role.key == roleKey);
+				if (role is null)
 				{
-					handlers.TryAdd(tempSavedPawns[j], true);
+					Log.Error($"Could not load VehicleRole from {roleKey}. Was role removed or name changed?");
 				}
-				tempSavedPawns.Clear();
 			}
 		}
 	}

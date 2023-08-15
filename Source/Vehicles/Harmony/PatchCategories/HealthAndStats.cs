@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection.Emit;
 using HarmonyLib;
 using Verse;
+using Verse.AI;
 using RimWorld;
 using UnityEngine;
 using SmashTools;
@@ -23,9 +24,18 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_HealthTracker), "ShouldBeDowned"),
 				prefix: new HarmonyMethod(typeof(HealthAndStats),
 				nameof(VehicleShouldBeDowned)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PawnDownedWiggler), nameof(PawnDownedWiggler.WigglerTick)),
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_HealthTracker), nameof(Pawn_HealthTracker.AddHediff), parameters: new Type[] { typeof(Hediff), typeof(BodyPartRecord), typeof(DamageInfo?), typeof(DamageWorker.DamageResult) }),
 				prefix: new HarmonyMethod(typeof(HealthAndStats),
-				nameof(VehicleShouldWiggle)));
+				nameof(VehiclesDontAddHediffs)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_HealthTracker), "MakeDowned"),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(VehiclesCantBeDowned)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(MentalStateWorker), nameof(MentalStateWorker.StateCanOccur)),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(VehiclesCantEnterMentalState)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(MentalBreakWorker), nameof(MentalBreakWorker.BreakCanOccur)),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(VehiclesCantEnterMentalBreak)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(HediffUtility), nameof(HediffUtility.CanHealNaturally)),
 				prefix: new HarmonyMethod(typeof(HealthAndStats),
 				nameof(VehiclesDontHeal)));
@@ -38,6 +48,17 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(StatWorker), nameof(StatWorker.IsDisabledFor)),
 				prefix: new HarmonyMethod(typeof(HealthAndStats),
 				nameof(StatDisabledForVehicle)));
+
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(SchoolUtility), nameof(SchoolUtility.CanTeachNow)),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(CantTeachVehicles)));
+
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(StunHandler), nameof(StunHandler.StunFor)),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(StunVehicleConditionally)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(StaggerHandler), nameof(StaggerHandler.StaggerFor)),
+				prefix: new HarmonyMethod(typeof(HealthAndStats),
+				nameof(StaggerVehicleConditionally)));
 		}
 
 		/// <summary>
@@ -50,17 +71,16 @@ namespace Vehicles
 		{
 			if (__instance is VehiclePawn vehicle)
 			{
-				float num = vehicle.GetStatValue(VehicleStatDefOf.MoveSpeed) / 60;
-				float num2 = 1 / num;
+				float speed = 1 / (vehicle.GetStatValue(VehicleStatDefOf.MoveSpeed) / 60);
 				if (vehicle.Spawned && !vehicle.Map.roofGrid.Roofed(vehicle.Position))
 				{
-					num2 /= vehicle.Map.weatherManager.CurMoveSpeedMultiplier;
+					speed /= vehicle.Map.weatherManager.CurMoveSpeedMultiplier;
 				}
 				if (diagonal)
 				{
-					num2 *= Mathf.Sqrt(2);
+					speed *= Ext_Math.Sqrt2;
 				}
-				__result = Mathf.RoundToInt(num2).Clamp(1, 450);
+				__result = Mathf.RoundToInt(speed).Clamp(1, 450);
 				return false;
 			}
 			return true;
@@ -82,28 +102,66 @@ namespace Vehicles
 					{
 						if (pawn.IsBoat() && vehicle.beached)
 						{
-							__result = vehicle.VehicleDef.properties.healthLabel_Beached;
+							__result = "VF_healthLabel_Beached".Translate();
 						}
 						else
 						{
-							__result = vehicle.VehicleDef.properties.healthLabel_Immobile;
+							__result = "VF_healthLabel_Immobile".Translate();
 						}
 
 						return false;
 					}
 					if (pawn.Dead)
 					{
-						__result = vehicle.VehicleDef.properties.healthLabel_Dead;
+						__result = "VF_healthLabel_Dead".Translate();
 						return false;
 					}
-					if (pawn.health.summaryHealth.SummaryHealthPercent < 0.95)
+					if (vehicle.statHandler.HealthPercent < 0.95f)
 					{
-						__result = vehicle.VehicleDef.properties.healthLabel_Injured;
+						__result = "VF_healthLabel_Injured".Translate();
 						return false;
 					}
-					__result = vehicle.VehicleDef.properties.healthLabel_Healthy;
+					__result = "VF_healthLabel_Healthy".Translate();
 					return false;
 				}
+			}
+			return true;
+		}
+
+		public static bool VehiclesDontAddHediffs(Pawn ___pawn)
+		{
+			if (___pawn is VehiclePawn)
+			{
+				return false;
+			}
+			return true;
+		}
+
+		public static bool VehiclesCantBeDowned(Pawn ___pawn)
+		{
+			if (___pawn is VehiclePawn)
+			{
+				return false;
+			}
+			return true;
+		}
+
+		public static bool VehiclesCantEnterMentalState(Pawn pawn, ref bool __result)
+		{
+			if (pawn is VehiclePawn)
+			{
+				__result = false;
+				return false;
+			}
+			return true;
+		}
+
+		public static bool VehiclesCantEnterMentalBreak(Pawn pawn, ref bool __result)
+		{
+			if (pawn is VehiclePawn)
+			{
+				__result = false;
+				return false;
 			}
 			return true;
 		}
@@ -119,20 +177,6 @@ namespace Vehicles
 			if (___pawn != null && ___pawn is VehiclePawn)
 			{
 				__result = false;
-				return false;
-			}
-			return true;
-		}
-
-		/// <summary>
-		/// Only allow the Boat to wiggle if specified within the XML def
-		/// </summary>
-		/// <param name="___pawn"></param>
-		/// <returns></returns>
-		public static bool VehicleShouldWiggle(ref Pawn ___pawn)
-		{
-			if (___pawn != null && ___pawn is VehiclePawn vehicle)
-			{
 				return false;
 			}
 			return true;
@@ -190,6 +234,35 @@ namespace Vehicles
 			{
 				__result = false;
 				return false;
+			}
+			return true;
+		}
+
+		public static bool CantTeachVehicles(Pawn teacher, ref bool __result)
+		{
+			if (teacher is VehiclePawn)
+			{
+				__result = false;
+				return false;
+			}
+			return true;
+		}
+
+		public static bool StunVehicleConditionally(int ticks, Thing instigator, Thing ___parent)
+		{
+			if (___parent is VehiclePawn vehicle)
+			{
+				return vehicle.CanApplyStun(instigator);
+			}
+			return true;
+		}
+
+		public static bool StaggerVehicleConditionally(int ticks, Thing ___parent, ref bool __result)
+		{
+			if (___parent is VehiclePawn vehicle)
+			{
+				__result = false;
+				return vehicle.CanApplyStagger();
 			}
 			return true;
 		}

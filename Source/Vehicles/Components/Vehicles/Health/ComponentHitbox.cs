@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Verse;
 using UnityEngine;
+using SmashTools;
 
 namespace Vehicles
 {
@@ -22,6 +23,15 @@ namespace Vehicles
 
 		public bool Contains(IntVec3 cell) => Hitbox?.Contains(new IntVec2(cell.x, cell.z)) ?? false;
 
+		public IntVec2 NearestTo(IntVec2 cell)
+		{
+			if (Hitbox.Count == 1)
+			{
+				return Hitbox[0];
+			}
+			return Hitbox.MinBy(hb => (hb - cell).Magnitude);
+		}
+
 		public void Initialize(VehicleDef def)
 		{
 			if (!cells.NullOrEmpty())
@@ -30,7 +40,7 @@ namespace Vehicles
 			}
 			else
 			{
-				CellRect rect = CellRect.CenteredOn(new IntVec3(0, 0, 0), def.Size.x, def.Size.z);
+				CellRect rect = def.VehicleRect(new IntVec3(0, 0, 0), Rot4.North);
 				List<IntVec3> cells = new List<IntVec3>();
 				if (side == VehicleComponentPosition.Body)
 				{
@@ -43,9 +53,13 @@ namespace Vehicles
 						cells.Add(new IntVec3(cell.x, 0, cell.z));
 					}
 				}
-				else
+				else if (side != VehicleComponentPosition.Empty)
 				{
 					cells = rect.GetEdgeCells(RotationFromSide(side)).ToList();
+				}
+				else
+				{
+					cells = new List<IntVec3>() { IntVec3.Zero }; //If no hitbox provided, default to root position. (Only matters in the case of non-hitbox external components)
 				}
 				List<IntVec2> intVec2s = new List<IntVec2>();
 				foreach (IntVec3 cell in cells)

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Verse;
 using Verse.AI;
 
@@ -34,27 +35,45 @@ namespace Vehicles
 
 		public override bool AddClaimant(Pawn pawn, VehicleHandler target)
 		{
-			if(claimants.ContainsKey(pawn))
+			if (claimants.ContainsKey(pawn))
 			{
 				Log.Error($"Attempting to reserve Vehicle with {pawn.LabelShort}. Handler {target} is already reserved.");
 				return false;
 			}
-			claimants.Add(pawn, target);
-			if(handlerClaimants.ContainsKey(target))
+			claimants[pawn] = target;
+			if (handlerClaimants.ContainsKey(target))
 			{
 				handlerClaimants[target]++;
 			}
 			else
 			{
-				handlerClaimants.Add(target, 1);
+				handlerClaimants[target] = 1;
 			}
 			return true;
 		}
 
-		public override bool CanReserve(Pawn pawn, VehicleHandler target)
+		public override bool CanReserve(Pawn pawn, VehicleHandler target, StringBuilder stringBuilder = null)
 		{
-			bool flag = (target.handlers.Count + (handlerClaimants.TryGetValue(target, out int claiming) ? claiming : 0)) < target.role.slots;
-			return (pawn is null || !claimants.ContainsKey(pawn)) && flag;
+			int reservations = handlerClaimants.TryGetValue(target, 0);
+			bool rolesAvailable = (target.handlers.Count + reservations) < target.role.slots;
+			if (!rolesAvailable)
+			{
+				stringBuilder?.AppendLine($"Roles not available.  Existing={target.handlers.Count} Claimants={string.Join(",", claimants.Where(kvp => kvp.Value == target).Select(kvp => kvp.Key))} Allowed: {target.role.slots}");
+				return false;
+			}
+			if (pawn is null)
+			{
+				stringBuilder?.AppendLine("Null Claimant");
+				return true;
+			}
+			bool newClaimant = !claimants.ContainsKey(pawn);
+			stringBuilder?.AppendLine($"{pawn} is new claimant? {newClaimant}");
+			return newClaimant;
+		}
+
+		public override bool ReservedBy(Pawn pawn, VehicleHandler target)
+		{
+			return claimants.TryGetValue(pawn, out VehicleHandler handler) && handler == target;
 		}
 
 		public override void ReleaseAllReservations()
@@ -81,16 +100,16 @@ namespace Vehicles
 		public override void VerifyAndValidateClaimants()
 		{
 			List<Pawn> actors = new List<Pawn>(claimants.Keys);
-			foreach(Pawn actor in actors)
+			foreach (Pawn actor in actors)
 			{
 				Job matchedJob = actor.CurJob;
-				if(matchedJob?.def.defName != jobDef)
+				if (actor.CurJob?.def != jobDef)
 				{
-					matchedJob = actor.jobs.jobQueue?.FirstOrDefault(j => j.job.def.defName == jobDef)?.job;
+					matchedJob = actor.jobs.jobQueue?.FirstOrDefault(j => j.job.def == jobDef)?.job;
 				}
-				if(!actor.Spawned || actor.InMentalState || actor.Downed || actor.Dead || matchedJob?.def.defName != jobDef || matchedJob?.targetA != targetA || vehicle.vPather.Moving)
+				if (!actor.Spawned || actor.InMentalState || actor.Downed || actor.Dead || matchedJob?.def != jobDef || matchedJob?.targetA != targetA)
 				{
-					if(--handlerClaimants[claimants[actor]] <= 0)
+					if (--handlerClaimants[claimants[actor]] <= 0)
 					{
 						handlerClaimants.Remove(claimants[actor]);
 					}

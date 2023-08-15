@@ -17,7 +17,7 @@ namespace Vehicles
 
 		private Texture2D mainTex;
 
-		public override Material MatSingle => maskMatPatterns.FirstOrDefault().Value.Second?[0];
+		public override Material MatSingle => maskMatPatterns.FirstOrDefault().Value.materials?[0];
 
 		public override void Init(GraphicRequestRGB req, bool cacheResults = true)
 		{
@@ -40,9 +40,16 @@ namespace Vehicles
 			}
 			else
 			{
-				foreach (PatternDef pattern in DefDatabase<PatternDef>.AllDefs)
+				if (VehicleMod.settings.main.useCustomShaders)
 				{
-					maskMatPatterns.Add(pattern, new Pair<string, Material[]>(req.path, GenerateMasks(req, pattern)));
+					foreach (PatternDef pattern in DefDatabase<PatternDef>.AllDefsListForReading)
+					{
+						maskMatPatterns.Add(pattern, (req.path, GenerateMasks(req, pattern)));
+					}
+				}
+				else
+				{
+					maskMatPatterns.Add(PatternDefOf.Default, (req.path, GenerateMasks(req, PatternDefOf.Default)));
 				}
 			}
 		}
@@ -96,19 +103,19 @@ namespace Vehicles
 		{
 			if (!Shader.SupportsRGBMaskTex() || pattern is null)
 			{
-				return maskMatPatterns[PatternDefOf.Default].Second[0];
+				return maskMatPatterns[PatternDefOf.Default].materials[0];
 			}
 			if (maskMatPatterns.TryGetValue(pattern, out var values))
 			{
-				return values.Second[0];
+				return values.materials[0];
 			}
 			else
 			{
 				Log.Error($"{VehicleHarmony.LogLabel} Key {pattern.defName} not found in {GetType()}.");
 				string folders = string.Empty;
-				foreach (var item in maskMatPatterns)
+				foreach ((PatternDef patternDef, (string texPath, Material[] materials)) in maskMatPatterns)
 				{
-					folders += $"Item: {item.Key} Destination: {item.Value.First}\n";
+					folders += $"Item: {patternDef} Destination: {texPath}\n";
 				}
 				Debug.Message($"{VehicleHarmony.LogLabel} Additional Information:\n" +
 					$"MatCount: {maskMatPatterns.Count}\n" +
@@ -125,19 +132,20 @@ namespace Vehicles
 			}
 			if (!Shader.SupportsRGBMaskTex() || vehicle.Pattern is null)
 			{
-				return maskMatPatterns[PatternDefOf.Default].Second[0];
+				//Use default material as shader still supports masking to some degreee
+				return maskMatPatterns[PatternDefOf.Default].materials[0];
 			}
 			if (maskMatPatterns.TryGetValue(vehicle.Pattern, out var values))
 			{
-				return values.Second[0];
+				return values.materials[0];
 			}
 			else
 			{
 				Log.Error($"{VehicleHarmony.LogLabel} Key {vehicle.Pattern.defName} not found in {GetType()} for {vehicle}.");
 				string folders = string.Empty;
-				foreach(var item in maskMatPatterns)
+				foreach ((PatternDef patternDef, (string texPath, Material[] materials)) in maskMatPatterns)
 				{
-					folders += $"Item: {item.Key} Destination: {item.Value.First}\n";
+					folders += $"Item: {patternDef} Destination: {texPath}\n";
 				}
 				Debug.Message($"{VehicleHarmony.LogLabel} Additional Information:\n" +
 					$"MatCount: {maskMatPatterns.Count}\n" +
@@ -155,15 +163,15 @@ namespace Vehicles
 		{
 			if (pattern != null && maskMatPatterns.TryGetValue(pattern, out var values))
 			{
-				return values.Second[index];
+				return values.materials[index];
 			}
 			else
 			{
 				Log.Error($"{VehicleHarmony.LogLabel} Key {pattern?.defName ?? "[Null]"} not found in {GetType()}.");
 				string folders = string.Empty;
-				foreach(var item in maskMatPatterns)
+				foreach ((PatternDef patternDef, (string texPath, Material[] materials)) in maskMatPatterns)
 				{
-					folders += $"Item: {item.Key} Destination: {item.Value.First}\n";
+					folders += $"Item: {patternDef} Destination: {texPath}\n";
 				}
 				Debug.Message($"{VehicleHarmony.LogLabel} Additional Information:\n" +
 					$"MatCount: {maskMatPatterns.Count}\n" +

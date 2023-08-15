@@ -3,36 +3,40 @@ using System.Collections.Generic;
 using System.Linq;
 using Verse;
 using Verse.AI;
-using RimWorld;
+using SmashTools;
 
 namespace Vehicles
 {
-	public class VehiclePositionManager : MapComponent
+	/// <summary>
+	/// Reservation manager for positions of vehicle, reserves entire hitbox of vehicle
+	/// </summary>
+	/// <remarks>Only ever read / written to from MainThread</remarks>
+	public class VehiclePositionManager : DetachedMapComponent
 	{
-		private readonly Dictionary<VehiclePawn, HashSet<IntVec3>> occupiedRect = new Dictionary<VehiclePawn, HashSet<IntVec3>>();
+		private readonly Dictionary<IntVec3, VehiclePawn> occupiedCells = new Dictionary<IntVec3, VehiclePawn>();
+		private readonly Dictionary<VehiclePawn, List<IntVec3>> occupiedRect = new Dictionary<VehiclePawn, List<IntVec3>>();
 
 		public VehiclePositionManager(Map map) : base(map)
 		{
-			occupiedRect = new Dictionary<VehiclePawn, HashSet<IntVec3>>();
+			occupiedCells = new Dictionary<IntVec3, VehiclePawn>();
+			occupiedRect = new Dictionary<VehiclePawn, List<IntVec3>>();
 		}
 
-		public bool PositionClaimed(IntVec3 cell) => occupiedRect.Values.Any(h => h.Contains(cell));
+		public bool PositionClaimed(IntVec3 cell) => ClaimedBy(cell) != null;
 
-		public VehiclePawn ClaimedBy(IntVec3 cell) => occupiedRect.FirstOrDefault(v => v.Value.Contains(cell)).Key;
+		public VehiclePawn ClaimedBy(IntVec3 cell) => occupiedCells.TryGetValue(cell, null);
+
+		public List<IntVec3> ClaimedBy(VehiclePawn vehicle) => occupiedRect.TryGetValue(vehicle, null);
 
 		public void ClaimPosition(VehiclePawn vehicle)
 		{
-			int x = vehicle.def.Size.x;
-			int z = vehicle.def.Size.z;
-			if (vehicle.Rotation.IsHorizontal)
+			ReleaseClaimed(vehicle);
+			List<IntVec3> newClaim = vehicle.VehicleRect().ToList();
+			occupiedRect[vehicle] = newClaim;
+			foreach (IntVec3 cell in newClaim)
 			{
-				int tmp = x;
-				x = z;
-				z = tmp;
+				occupiedCells[cell] = vehicle;
 			}
-			CellRect newRect = CellRect.CenteredOn(vehicle.Position, x, z);
-			HashSet<IntVec3> hash = newRect.Cells.ToHashSet();
-			occupiedRect[vehicle] = hash;
 
 			vehicle.RecalculateFollowerCell();
 			if (ClaimedBy(vehicle.FollowerCell) is VehiclePawn blockedVehicle)
@@ -43,6 +47,13 @@ namespace Vehicles
 
 		public bool ReleaseClaimed(VehiclePawn vehicle)
 		{
+			if (occupiedRect.TryGetValue(vehicle, out List<IntVec3> currentlyOccupied))
+			{
+				foreach (IntVec3 cell in currentlyOccupied)
+				{
+					occupiedCells.Remove(cell);
+				}
+			}
 			return occupiedRect.Remove(vehicle);
 		}
 	}

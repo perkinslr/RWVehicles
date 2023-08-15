@@ -95,7 +95,7 @@ namespace Vehicles
 		/// <param name="__result"></param>
 		public static void AnyVehicleBlockingMapRemoval(MapPawns __instance, ref bool __result, Map ___map)
 		{
-			if(__result is false)
+			if (__result is false)
 			{
 				if (LandingTargeter.Instance.IsTargeting && Current.Game.CurrentMap == ___map)
 				{
@@ -112,9 +112,9 @@ namespace Vehicles
 					__result = true;
 					return;
 				}
-				foreach(Pawn pawn in __instance.AllPawnsSpawned)
+				foreach (Pawn pawn in __instance.AllPawnsSpawned)
 				{
-					if(pawn is VehiclePawn vehicle && vehicle.AllPawnsAboard.NotNullAndAny())
+					if (pawn is VehiclePawn vehicle && vehicle.AllPawnsAboard.NotNullAndAny())
 					{
 						foreach (Pawn sailor in vehicle.AllPawnsAboard)
 						{

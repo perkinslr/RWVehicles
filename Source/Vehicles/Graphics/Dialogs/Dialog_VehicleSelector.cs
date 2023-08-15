@@ -38,13 +38,13 @@ namespace Vehicles
 			Rect labelRect = new Rect(0f, 0f, inRect.width, 35f);
 			Text.Font = GameFont.Medium;
 			Text.Anchor = TextAnchor.MiddleCenter;
-			Widgets.Label(labelRect, "SelectVehiclesForPlanner".Translate());
+			Widgets.Label(labelRect, "VF_SelectVehiclesForPlanner".Translate());
 
 			Text.Font = GameFont.Small;
 			Text.Anchor = TextAnchor.UpperLeft;
 
 			Rect toggleRect = new Rect(labelRect);
-			if (UIElements.ClickableLabel(toggleRect, showVehicleDefs ? "VehicleRoutePlannerToggleVehicleDefs".Translate() : "VehicleRoutePlannerToggleVehicles".Translate(), Color.grey, Color.white))
+			if (UIElements.ClickableLabel(toggleRect, showVehicleDefs ? "VF_RoutePlannerToggleVehicleDefs".Translate() : "VF_RoutePlannerToggleVehicles".Translate(), Color.grey, Color.white))
 			{
 				showVehicleDefs = !showVehicleDefs;
 			}
@@ -52,9 +52,9 @@ namespace Vehicles
 			inRect.yMin += labelRect.height;
 			Widgets.DrawMenuSection(inRect);
 
-			Rect windowRect = new Rect(inRect);
-			windowRect.yMax = inRect.height - BottomButtonSize.y - ButtonPadding;
-			DrawVehicleSelect(inRect);
+			Rect windowRect = new Rect(inRect).ContractedBy(1);
+			windowRect.yMax = inRect.height - ButtonPadding - 5;
+			DrawVehicleSelect(windowRect);
 
 			Rect rectBottom = inRect.AtZero();
 			DoBottomButtons(rectBottom);
@@ -103,13 +103,7 @@ namespace Vehicles
 					float x = texProportions.x;
 					texProportions.x = texProportions.y;
 					texProportions.y = x;
-					Material mat = null;
-					if (vehicle.VehicleGraphic.Shader.SupportsRGBMaskTex())
-					{
-						mat = vehicle.VehicleGraphic.MatAt(Rot8.East, vehicle.Pattern);
-					}
-					RenderHelper.DrawVehicleFitted(iconRect, vehicle.VehicleDef, Rot4.East, mat);
-					//Widgets.DrawTextureFitted(iconRect, VehicleTex.VehicleTexture(vehicle.VehicleDef, Rot8.East), GenUI.IconDrawScale(vehicle.VehicleDef), texProportions, texCoords, 0, mat);
+					VehicleGUI.DrawVehicleDefOnGUI(iconRect, vehicle.VehicleDef);
 				}
 				else
 				{
@@ -158,13 +152,7 @@ namespace Vehicles
 					float x = texProportions.x;
 					texProportions.x = texProportions.y;
 					texProportions.y = x;
-					Material mat = null;
-					if (vehicleDef.graphic is Graphic_Vehicle graphicVehicle && graphicVehicle.Shader.SupportsRGBMaskTex())
-					{
-						mat = graphicVehicle.MatAt(Rot8.East, PatternDefOf.Default);
-					}
-					RenderHelper.DrawVehicleFitted(iconRect, vehicleDef, Rot4.East, mat);
-					//Widgets.DrawTextureFitted(iconRect, VehicleTex.VehicleTexture(vehicleDef, Rot8.East), vehicleDef.uiIconScale, texProportions, texCoords, 0, mat);
+					VehicleGUI.DrawVehicleDefOnGUI(iconRect, vehicleDef);
 				}
 				else
 				{
@@ -194,11 +182,11 @@ namespace Vehicles
 		{
 			Rect rect2 = new Rect(rect.width - BottomButtonSize.x - ButtonPadding - 15f, rect.height - ButtonPadding, BottomButtonSize.x, BottomButtonSize.y);
 
-			if (Widgets.ButtonText(rect2, "StartVehicleRoutePlanner".Translate()))
+			if (Widgets.ButtonText(rect2, "VF_StartVehicleRoutePlanner".Translate()))
 			{
 				if (storedVehicleDefs.NotNullAndAny(v => v.vehicleType == VehicleType.Sea) && storedVehicleDefs.NotNullAndAny(v => v.vehicleType == VehicleType.Land))
 				{
-					Messages.Message("LandAndSeaRoutePlannerRestriction".Translate(), MessageTypeDefOf.RejectInput);
+					Messages.Message("VF_LandAndSeaRoutePlannerRestriction".Translate(), MessageTypeDefOf.RejectInput);
 					return;
 				}
 

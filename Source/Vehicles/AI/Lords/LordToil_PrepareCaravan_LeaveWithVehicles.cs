@@ -8,7 +8,7 @@ using SmashTools;
 
 namespace Vehicles
 {
-	public class LordToil_PrepareCaravan_LeaveWithVehicles : LordToil
+	public class LordToil_PrepareCaravan_LeaveWithVehicles : LordToil, IDebugLordMeetingPoint
 	{
 		private IntVec3 exitSpot;
 
@@ -16,6 +16,8 @@ namespace Vehicles
 		{
 			this.exitSpot = exitSpot;
 		}
+
+		public IntVec3 MeetingPoint => exitSpot;
 
 		public override bool AllowSatisfyLongNeeds => false;
 
@@ -42,9 +44,9 @@ namespace Vehicles
 			RotatingList<VehiclePawn> vehicles = lord.ownedPawns.Where(p => p is VehiclePawn).Cast<VehiclePawn>().ToRotatingList();
 			foreach (Pawn pawn in lord.ownedPawns)
 			{
-				if (pawn is VehiclePawn)
+				if (pawn is VehiclePawn vehicle)
 				{
-					pawn.drafter.Drafted = true;
+					vehicle.ignition.Drafted = true;
 					pawn.mindState.duty = new PawnDuty(DutyDefOf_Vehicles.TravelOrWaitVehicle, exitSpot)
 					{
 						locomotion = LocomotionUrgency.Jog
@@ -53,8 +55,8 @@ namespace Vehicles
 				}
 				else
 				{
-					VehiclePawn vehicle = vehicles.Next;
-					pawn.mindState.duty = new PawnDuty(DutyDefOf_Vehicles.FollowVehicle, vehicle, vehicle.VehicleDef.Size.z * 1.5f)
+					VehiclePawn nextVehicle = vehicles.Next;
+					pawn.mindState.duty = new PawnDuty(DutyDefOf_Vehicles.FollowVehicle, nextVehicle, nextVehicle.VehicleDef.Size.z * 1.5f)
 					{
 						locomotion = LocomotionUrgency.Jog
 					};

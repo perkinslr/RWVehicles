@@ -33,14 +33,15 @@ namespace Vehicles
 			{
 				if (VehicleMod.selectedDef != null)
 				{
-					yield return new FloatMenuOption("DevModeResetVehicle".Translate(VehicleMod.selectedDef.LabelCap), delegate ()
+					yield return new FloatMenuOption("VF_DevMode_ResetVehicle".Translate(VehicleMod.selectedDef.LabelCap), delegate ()
 					{
+						defaultGraphics.Remove(VehicleMod.selectedDef.defName);
 						SettingsCustomizableFields.PopulateSaveableFields(VehicleMod.selectedDef, true);
 					});
 				}
-				yield return new FloatMenuOption("DevModeResetAllVehicles".Translate(), () => ResetSettings());
+				yield return new FloatMenuOption("VF_DevMode_ResetAllVehicles".Translate(), () => ResetSettings());
 
-				yield return new FloatMenuOption("DevModeResetAll".Translate(), delegate ()
+				yield return new FloatMenuOption("VF_DevMode_ResetAll".Translate(), delegate ()
 				{
 					VehicleMod.ResetAllSettings();
 				});
@@ -62,7 +63,7 @@ namespace Vehicles
 			defaultGraphics.Clear();
 			if (VehicleMod.ModifiableSettings)
 			{
-				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefs)
+				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefsListForReading)
 				{
 					SettingsCustomizableFields.PopulateSaveableFields(def, true);
 				}
@@ -79,14 +80,14 @@ namespace Vehicles
 
 		public override void ExposeData()
 		{
-			Scribe_NestedCollections.Look(ref fieldSettings, "fieldSettings", LookMode.Value, LookMode.Deep, LookMode.Undefined);
-			Scribe_Collections.Look(ref defaultGraphics, "defaultGraphics", LookMode.Value, LookMode.Deep);
+			Scribe_NestedCollections.Look(ref fieldSettings, nameof(fieldSettings), LookMode.Value, LookMode.Deep, LookMode.Undefined);
+			Scribe_Collections.Look(ref defaultGraphics, nameof(defaultGraphics), LookMode.Value, LookMode.Deep);
 		}
 
 		public override void DrawSection(Rect rect)
 		{
 			DrawVehicleOptions(rect);
-			VehicleMod.DrawVehicleList(rect, (bool valid) => valid ? string.Empty : "VehicleSettingsDisabledTooltip".Translate().ToString(), 
+			VehicleMod.DrawVehicleList(rect, (bool valid) => valid ? string.Empty : "VF_SettingsDisabledTooltip".Translate().ToString(), 
 				(VehicleDef def) => !VehicleMod.settingsDisabledFor.Contains(def.defName));
 		}
 
@@ -120,7 +121,7 @@ namespace Vehicles
 			listingStandard.Begin(vehicleDetailsContainer.ContractedBy(1));
 			listingStandard.Header($"{VehicleMod.selectedDef?.LabelCap ?? string.Empty}", ListingExtension.BannerColor, GameFont.Medium, TextAnchor.MiddleCenter);
 			listingStandard.End();
-
+			
 			if (VehicleMod.selectedDef != null)
 			{
 				try
@@ -132,52 +133,20 @@ namespace Vehicles
 					iconRect.x += menuRect.width / 4;
 					iconRect.y += 35;
 
-					drawStatusMessage = $"Creating Paintbrush. Pattern={VehicleMod.selectedPatterns.Count}";
-					if (VehicleMod.selectedPatterns.Count > 1 && VehicleMod.selectedDef.graphicData.shaderType.Shader.SupportsRGBMaskTex())
-					{
-						Rect paintBrushRect = new Rect(iconRect.x + iconRect.width, iconRect.y, SmallIconSize, SmallIconSize);
-						Widgets.DrawHighlightIfMouseover(paintBrushRect);
-						Widgets.DrawTextureFitted(paintBrushRect, VehicleTex.Recolor, 1);
-						TooltipHandler.TipRegionByKey(paintBrushRect, "VehiclesRecolorDefaultMaskTooltip");
-						if (Widgets.ButtonInvisible(paintBrushRect))
-						{
-							SoundDefOf.Click.PlayOneShotOnCamera();
-							Dialog_ColorPicker.OpenColorPicker(VehicleMod.selectedDef, 
-							delegate (Color colorOne, Color colorTwo, Color colorThree, PatternDef pattern, Vector2 displacement, float tiles)
-							{
-								defaultGraphics[VehicleMod.selectedDef.defName] = new PatternData(colorOne, colorTwo, colorThree, pattern, displacement, tiles);
-							});
-						}
-					}
-					drawStatusMessage = $"Creating RotationHandle. Pattern={VehicleMod.selectedPatterns.Count}";
-
-					if (VehicleMod.selectedDef.graphicData.drawRotated && VehicleMod.selectedDef.graphicData.Graphic is Graphic_Vehicle graphicVehicle)
-					{
-						Rect rotateVehicleRect = new Rect(iconRect.x + iconRect.width, iconRect.y + SmallIconSize, SmallIconSize, SmallIconSize);
-						Widgets.DrawHighlightIfMouseover(rotateVehicleRect);
-						Widgets.DrawTextureFitted(rotateVehicleRect, VehicleTex.ReverseIcon, 1);
-						if (Widgets.ButtonInvisible(rotateVehicleRect))
-						{
-							SoundDefOf.Click.PlayOneShotOnCamera();
-							List<Rot8> validRotations = graphicVehicle.RotationsRenderableByUI.ToList();
-							for (int i = 0; i < 4; i++)
-							{
-								currentVehicleFacing = currentVehicleFacing.Rotated(RotationDirection.Clockwise, false);
-								if (validRotations.Contains(currentVehicleFacing)) { break; }
-							}
-						}
-					}
+					DoShowcaseButtons(iconRect);
 
 					drawStatusMessage = $"Fetching PatternData from defaultMasks";
 					PatternData patternData = defaultGraphics.TryGetValue(VehicleMod.selectedDef.defName, VehicleMod.selectedDef.graphicData);
 
 					drawStatusMessage = $"Drawing VehicleTex in settings";
 					Widgets.BeginGroup(iconRect);
-					Rect vehicleTexRect = new Rect(Vector2.zero, iconRect.size);
-					drawStatusMessage = RenderHelper.DrawVehicleDef(vehicleTexRect, VehicleMod.selectedDef, null, patternData, directionFacing.TryGetValue(VehicleMod.selectedDef, currentVehicleFacing));
-					if (!drawStatusMessage.NullOrEmpty())
 					{
-						throw new Exception();
+						Rect vehicleTexRect = new Rect(Vector2.zero, iconRect.size);
+						drawStatusMessage = VehicleGraphics.DrawVehicleDef(vehicleTexRect, VehicleMod.selectedDef, null, patternData, directionFacing.TryGetValue(VehicleMod.selectedDef, currentVehicleFacing), withoutTurrets: true);
+						if (!drawStatusMessage.NullOrEmpty())
+						{
+							throw new Exception(drawStatusMessage);
+						}
 					}
 					Widgets.EndGroup();
 
@@ -250,6 +219,56 @@ namespace Vehicles
 			}
 		}
 
+		private void DoShowcaseButtons(Rect iconRect)
+		{
+			Rect showcaseIconRect = new Rect(iconRect.x + iconRect.width, iconRect.y, SmallIconSize, SmallIconSize);
+
+			drawStatusMessage = $"Creating RotationHandle. Pattern={VehicleMod.selectedPatterns.Count}";
+			if (VehicleMod.selectedDef.graphicData.drawRotated && VehicleMod.selectedDef.graphicData.Graphic is Graphic_Vehicle graphicVehicle)
+			{
+				if (VehicleShowcaseButton(showcaseIconRect, VehicleTex.ReverseIcon))
+				{
+					List<Rot8> validRotations = graphicVehicle.RotationsRenderableByUI.ToList();
+					for (int i = 0; i < 4; i++)
+					{
+						currentVehicleFacing = currentVehicleFacing.Rotated(RotationDirection.Clockwise, false);
+						if (validRotations.Contains(currentVehicleFacing)) { break; }
+					}
+				}
+				showcaseIconRect.y += SmallIconSize;
+			}
+
+			drawStatusMessage = $"Creating Paintbrush. Pattern={VehicleMod.selectedPatterns.Count}";
+			if (VehicleMod.selectedPatterns.Count > 1 && VehicleMod.settings.main.useCustomShaders && VehicleMod.selectedDef.graphicData.shaderType.Shader.SupportsRGBMaskTex())
+			{
+				if (VehicleShowcaseButton(showcaseIconRect, VehicleTex.Recolor, "VF_RecolorDefaultMaskTooltip"))
+				{
+					Dialog_ColorPicker.OpenColorPicker(VehicleMod.selectedDef,
+					delegate (Color colorOne, Color colorTwo, Color colorThree, PatternDef pattern, Vector2 displacement, float tiles)
+					{
+						defaultGraphics[VehicleMod.selectedDef.defName] = new PatternData(colorOne, colorTwo, colorThree, pattern, displacement, tiles);
+					});
+				}
+				showcaseIconRect.y += SmallIconSize;
+			}
+		}
+
+		private bool VehicleShowcaseButton(Rect rect, Texture2D icon, string tooltipKey = null)
+		{
+			Widgets.DrawHighlightIfMouseover(rect);
+			Widgets.DrawTextureFitted(rect, icon, 1);
+			if (!tooltipKey.NullOrEmpty())
+			{
+				TooltipHandler.TipRegionByKey(rect, tooltipKey);
+			}
+			if (Widgets.ButtonInvisible(rect))
+			{
+				SoundDefOf.Click.PlayOneShotOnCamera();
+				return true;
+			}
+			return false;
+		}
+
 		public void EnableButton(Rect rect)
 		{
 			if (VehicleMod.selectedDef is null)
@@ -269,7 +288,7 @@ namespace Vehicles
 			(string text, Color color) = EnabledStatus(enabledFor);
 			Vector2 size = Text.CalcSize(text);
 			Rect enabledButtonRect = new Rect(rect.x, rect.y, size.x, size.y);
-			TooltipHandler.TipRegion(enabledButtonRect, "VehicleEnableButtonTooltip".Translate());
+			TooltipHandler.TipRegion(enabledButtonRect, "VF_EnableButtonTooltip".Translate());
 
 			Color highlightedColor = new Color(color.r + 0.25f, color.g + 0.25f, color.b + 0.25f);
 			if (UIElements.ClickableLabel(enabledButtonRect, text, highlightedColor, color, GameFont.Medium, TextAnchor.MiddleLeft, new Color(color.r - 0.15f, color.g - 0.15f, color.b - 0.15f)))
@@ -290,10 +309,10 @@ namespace Vehicles
 		{
 			return status switch
 			{
-				VehicleEnabledFor.Everyone => ("VehicleEnabled".Translate(), Color.green),
-				VehicleEnabledFor.None => ("VehicleDisabled".Translate(), Color.red),
-				VehicleEnabledFor.Player => ("VehiclePlayerOnly".Translate(), new Color(0.1f, 0.85f, 0.85f)),
-				VehicleEnabledFor.Raiders => ("VehicleRaiderOnly".Translate(), new Color(0.9f, 0.53f, 0.1f)),
+				VehicleEnabledFor.Everyone => ("VF_VehicleEnabled".Translate(), Color.green),
+				VehicleEnabledFor.None => ("VF_VehicleDisabled".Translate(), Color.red),
+				VehicleEnabledFor.Player => ("VF_VehiclePlayerOnly".Translate(), new Color(0.1f, 0.85f, 0.85f)),
+				VehicleEnabledFor.Raiders => ("VF_VehicleRaiderOnly".Translate(), new Color(0.9f, 0.53f, 0.1f)),
 				_ => ("[Err] Uncaught Status", Color.red)
 			};
 		}

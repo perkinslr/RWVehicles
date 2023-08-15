@@ -12,7 +12,22 @@ namespace Vehicles
 	//REDO - Rivers
 	public static class WorldHelper
 	{
+		private static readonly List<Thing> inventoryItems = new List<Thing>();
+
 		public static bool RiverIsValid(int tile, List<Pawn> vehicles) => true;
+
+		public static List<Thing> AllInventoryItems(AerialVehicleInFlight aerialVehicle)
+		{
+			inventoryItems.Clear();
+			List<Pawn> pawnsListForReading = aerialVehicle.vehicle.AllPawnsAboard;
+			for (int i = 0; i < pawnsListForReading.Count; i++)
+			{
+				Pawn pawn = pawnsListForReading[i];
+				inventoryItems.AddRange(pawn.inventory.innerContainer);
+			}
+			inventoryItems.AddRange(aerialVehicle.vehicle.inventory.innerContainer);
+			return inventoryItems;
+		}
 
 		public static float RiverCostAt(int tile, VehiclePawn vehicle)
 		{
@@ -131,17 +146,6 @@ namespace Vehicles
 		}
 
 		/// <summary>
-		/// AerialVehicle <paramref name="vehicle"/> can offer gifts to <paramref name="settlement"/>
-		/// </summary>
-		/// <param name="vehicle"></param>
-		/// <param name="settlement"></param>
-		public static FloatMenuAcceptanceReport CanOfferGiftsTo(AerialVehicleInFlight vehicle, Settlement settlement)
-		{
-			return settlement != null && settlement.Spawned && !settlement.HasMap && settlement.Faction != null && settlement.Faction != Faction.OfPlayer
-				&& !settlement.Faction.def.permanentEnemy && settlement.Faction.HostileTo(Faction.OfPlayer) && settlement.CanTradeNow && vehicle.vehicle.HasNegotiator;
-		}
-
-		/// <summary>
 		/// Find best tile to snap to when ordering a caravan
 		/// </summary>
 		/// <param name="caravan"></param>
@@ -167,11 +171,35 @@ namespace Vehicles
 		public static Pawn FindBestNegotiator(VehiclePawn vehicle, Faction faction = null, TraderKindDef trader = null)
 		{
 			Predicate<Pawn> pawnValidator = null;
-			if (faction != null)    
+			if (faction != null)
 			{
-				pawnValidator = ((Pawn p) => p.CanTradeWith(faction, trader));
+				pawnValidator = delegate (Pawn p)
+				{
+					AcceptanceReport report = p.CanTradeWith(faction, trader);
+					return report.Accepted;
+				};
 			}
 			return vehicle.FindPawnWithBestStat(StatDefOf.TradePriceImprovement, pawnValidator);
+		}
+
+		/// <summary>
+		/// Find best negotiator in Vehicle for trading on the World Map
+		/// </summary>
+		/// <param name="vehicle"></param>
+		/// <param name="faction"></param>
+		/// <param name="trader"></param>
+		public static Pawn FindBestNegotiator(VehicleCaravan caravan, Faction faction = null, TraderKindDef trader = null)
+		{
+			Predicate<Pawn> pawnValidator = null;
+			if (faction != null)    
+			{
+				pawnValidator = delegate (Pawn p)
+				{
+					AcceptanceReport report = p.CanTradeWith(faction, trader);
+					return report.Accepted;
+				};
+			}
+			return BestCaravanPawnUtility.FindPawnWithBestStat(caravan, StatDefOf.TradePriceImprovement, pawnValidator: pawnValidator);
 		}
 
 		/// <summary>
@@ -192,75 +220,47 @@ namespace Vehicles
 		}
 
 		/// <summary>
-		/// Change <paramref name="tileID"/> if tile is within CoastRadius of a coast <see cref="VehiclesModSettings"/>
+		/// Change <paramref name="tile"/> if tile is within CoastRadius of a coast <see cref="VehiclesModSettings"/>
 		/// </summary>
-		/// <param name="tileID"></param>
+		/// <param name="tile"></param>
 		/// <param name="faction"></param>
-		/// <returns>new tileID if a nearby coast is found or <paramref name="tileID"/> if not found</returns>
-		public static int PushSettlementToCoast(int tileID, Faction faction)
+		/// <returns>new tileID if a nearby coast is found or <paramref name="tile"/> if not found</returns>
+		public static int PushSettlementToCoast(int tile, Faction faction)
 		{
 			if (VehicleMod.CoastRadius <= 0)
 			{
-				return tileID;
+				return tile;
+			}
+
+			if (Find.World.CoastDirectionAt(tile).IsValid)
+			{
+				if (Find.WorldGrid[tile].biome.canBuildBase && !(faction is null))
+				{
+					VehicleHarmony.tiles.Add(new Pair<int, int>(tile, 0));
+				}
+				return tile;
 			}
 
 			List<int> neighbors = new List<int>();
-			Stack<int> stack = new Stack<int>();
-			stack.Push(tileID);
-			Stack<int> stackFull = stack;
-			List<int> newTilesSearch = new List<int>();
-			HashSet<int> allSearchedTiles = new HashSet<int>() { tileID };
-			int searchTile;
-			int searchedRadius = 0;
-
-			if (Find.World.CoastDirectionAt(tileID).IsValid)
+			return Ext_World.BFS(tile, neighbors, VehicleMod.CoastRadius, result: delegate (int currentTile, int currentRadius)
 			{
-				if (Find.WorldGrid[tileID].biome.canBuildBase && !(faction is null))
+				if (Find.World.CoastDirectionAt(currentTile).IsValid)
 				{
-					VehicleHarmony.tiles.Add(new Pair<int, int>(tileID, 0));
-				}
-				return tileID;
-			}
-
-			while (searchedRadius < VehicleMod.CoastRadius)
-			{
-				for (int j = 0; j < stackFull.Count; j++)
-				{
-					searchTile = stack.Pop();
-					Find.WorldGrid.GetTileNeighbors(searchTile, neighbors);
-					int count = neighbors.Count;
-					for (int i = 0; i < count; i++)
+					if (Find.WorldGrid[currentTile].biome.canBuildBase && Find.WorldGrid[currentTile].biome.implemented && Find.WorldGrid[currentTile].hilliness != Hilliness.Impassable)
 					{
-						if (allSearchedTiles.NotNullAndAny(x => x == neighbors[i]))
+						if (VehicleHarmony.debug && !(faction is null))
 						{
-							continue;
+							DebugHelper.DebugDrawSettlement(tile, currentTile);
 						}
-						newTilesSearch.Add(neighbors[i]);
-						allSearchedTiles.Add(neighbors[i]);
-						if (Find.World.CoastDirectionAt(neighbors[i]).IsValid)
+						if (faction != null)
 						{
-							if (Find.WorldGrid[neighbors[i]].biome.canBuildBase && Find.WorldGrid[neighbors[i]].biome.implemented && Find.WorldGrid[neighbors[i]].hilliness != Hilliness.Impassable)
-							{
-								if (VehicleHarmony.debug && !(faction is null))
-								{
-									DebugHelper.DebugDrawSettlement(tileID, neighbors[i]);
-								}
-								if (faction != null)
-								{
-									VehicleHarmony.tiles.Add(new Pair<int, int>(neighbors[i], searchedRadius));
-								}
-								return neighbors[i];
-							}
+							VehicleHarmony.tiles.Add(new Pair<int, int>(currentTile, currentRadius));
 						}
+						return true;
 					}
 				}
-				stack.Clear();
-				stack = new Stack<int>(newTilesSearch);
-				stackFull = stack;
-				newTilesSearch.Clear();
-				searchedRadius++;
-			}
-			return tileID;
+				return false;
+			});
 		}
 
 		/// <summary>

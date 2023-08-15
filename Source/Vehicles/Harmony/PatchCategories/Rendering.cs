@@ -15,26 +15,53 @@ namespace Vehicles
 {
 	internal class Rendering : IPatchCategory
 	{
+		/// <summary>
+		/// Const values from <see cref="CellInspectorDrawer"/>
+		/// </summary>
+		public const float DistFromMouse = 26f;
+		public const float LabelColumnWidth = 130f;
+		public const float InfoColumnWidth = 170f;
+		public const float WindowPadding = 12f;
+		public const float ColumnPadding = 12f;
+		public const float LineHeight = 24f;
+		public const float ThingIconSize = 22f;
+		public const float WindowWidth = 336f;
+
+		private static readonly List<AerialVehicleInFlight> tmpAerialVehicles = new List<AerialVehicleInFlight>();
+		private static readonly List<Pawn> tmpPawns = new List<Pawn>();
+
+		public static MethodInfo TrueCenter_Thing { get; private set; }
+		public static MethodInfo TrueCenter_Baseline { get; private set; }
+
 		public void PatchMethods()
 		{
+			TrueCenter_Thing = AccessTools.Method(typeof(GenThing), nameof(GenThing.TrueCenter), parameters: new Type[] { typeof(Thing) });
+			TrueCenter_Baseline = AccessTools.Method(typeof(GenThing), nameof(GenThing.TrueCenter), parameters: new Type[] { typeof(IntVec3), typeof(Rot4), typeof(IntVec2), typeof(float) });
+
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_RotationTracker), nameof(Pawn_RotationTracker.UpdateRotation)),
 				prefix: new HarmonyMethod(typeof(Rendering),
 				nameof(UpdateVehicleRotation)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(ColonistBarColonistDrawer), "DrawIcons"), prefix: null,
 				postfix: new HarmonyMethod(typeof(Rendering),
 				nameof(DrawIconsVehicles)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(ColonistBar), "CheckRecacheEntries"),
+				transpiler: new HarmonyMethod(typeof(Rendering),
+				nameof(CheckRecacheAerialVehicleEntriesTranspiler)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(SelectionDrawer), "DrawSelectionBracketFor"),
 				prefix: new HarmonyMethod(typeof(Rendering),
 				nameof(DrawSelectionBracketsVehicles)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PawnFootprintMaker), nameof(PawnFootprintMaker.FootprintMakerTick)),
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(CellInspectorDrawer), "DrawThingRow"),
 				prefix: new HarmonyMethod(typeof(Rendering),
-				nameof(BoatWakesTicker)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PawnTweener), "TweenedPosRoot"),
+				nameof(CellInspectorDrawVehicle)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn), nameof(Pawn.ProcessPostTickVisuals)),
 				prefix: new HarmonyMethod(typeof(Rendering),
-				nameof(VehicleTweenedPosRoot)));
+				nameof(ProcessVehiclePostTickVisuals)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(GhostDrawer), nameof(GhostDrawer.DrawGhostThing)),
 				postfix: new HarmonyMethod(typeof(Rendering),
 				nameof(DrawGhostVehicle)));
+			VehicleHarmony.Patch(original: TrueCenter_Thing,
+				prefix: new HarmonyMethod(typeof(Rendering),
+				nameof(TrueCenterVehicle)));
 
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Targeter), nameof(Targeter.TargeterOnGUI)),
 				postfix: new HarmonyMethod(typeof(Rendering),
@@ -45,13 +72,15 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Targeter), nameof(Targeter.TargeterUpdate)),
 				postfix: new HarmonyMethod(typeof(Rendering),
 				nameof(TargeterUpdate)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Targeter), nameof(Targeter.StopTargeting)),
+				postfix: new HarmonyMethod(typeof(Rendering),
+				nameof(TargeterStop)));
 		}
 
 		/// <summary>
 		/// Use own Vehicle rotation to disallow moving rotation for various tasks such as Drafted
 		/// </summary>
 		/// <param name="__instance"></param>
-		/// <returns></returns>
 		public static bool UpdateVehicleRotation(Pawn_RotationTracker __instance, Pawn ___pawn)
 		{
 			if (___pawn is VehiclePawn vehicle)
@@ -89,18 +118,65 @@ namespace Vehicles
 
 			Rect rect2 = new Rect(vector.x, vector.y, num, num);
 			GUI.DrawTexture(rect2, VehicleTex.CachedTextureIcons[handler.vehicle.VehicleDef]);
-			TooltipHandler.TipRegion(rect2, "ActivityIconOnBoardShip".Translate(handler.vehicle.Label)); 
+			TooltipHandler.TipRegion(rect2, "VF_ActivityIconOnBoardShip".Translate(handler.vehicle.Label)); 
 			vector.x += num;
+		}
+
+		public static IEnumerable<CodeInstruction> CheckRecacheAerialVehicleEntriesTranspiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilg)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			MethodInfo clearCachedEntriesMethod = AccessTools.Method(typeof(List<int>), nameof(List<int>.Clear));
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.Calls(clearCachedEntriesMethod))
+				{
+					yield return instruction; //CALLVIRT : List<int32>.Clear
+					instruction = instructionList[++i];
+
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_0);
+					yield return new CodeInstruction(opcode: OpCodes.Ldfld, operand: AccessTools.Field(typeof(ColonistBar), "cachedEntries"));
+					yield return new CodeInstruction(opcode: OpCodes.Ldloca, operand: 0);
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(Rendering), nameof(RecacheAerialVehicleEntries)));
+				}
+
+				yield return instruction;
+			}
+		}
+
+		private static void RecacheAerialVehicleEntries(List<ColonistBar.Entry> cachedEntries, ref int group)
+		{
+			tmpAerialVehicles.Clear();
+			tmpAerialVehicles.AddRange(VehicleWorldObjectsHolder.Instance.AerialVehicles);
+			tmpAerialVehicles.SortBy(aerialVehicle => aerialVehicle.ID);
+			foreach (AerialVehicleInFlight aerialVehicle in tmpAerialVehicles)
+			{
+				if (aerialVehicle.IsPlayerControlled)
+				{
+					tmpPawns.Clear();
+					tmpPawns.AddRange(aerialVehicle.vehicle.AllPawnsAboard);
+					PlayerPawnsDisplayOrderUtility.Sort(tmpPawns);
+					foreach (Pawn pawn in tmpPawns)
+					{
+						if (pawn.IsColonist)
+						{
+							cachedEntries.Add(new ColonistBar.Entry(pawn, null, group));
+						}
+					}
+					group++;
+				}
+			}
 		}
 
 		/// <summary>
 		/// Draw diagonal and shifted brackets for Boats
 		/// </summary>
 		/// <param name="obj"></param>
-		/// <returns></returns>
-		public static bool DrawSelectionBracketsVehicles(object obj)
+		public static bool DrawSelectionBracketsVehicles(object obj, Material overrideMat)
 		{
-			var vehicle = obj as VehiclePawn;
+			var vehicle = obj as VehiclePawn; 
 			var building = obj as VehicleBuilding;
 			if (vehicle != null || building?.vehicle != null)
 			{
@@ -111,65 +187,61 @@ namespace Vehicles
 				Vector3[] brackets = new Vector3[4];
 				float angle = vehicle.Angle;
 
-				Vector3 newDrawPos = vehicle.DrawPosTransformed(vehicle.VehicleDef.drawProperties.selectionBracketsOffset, angle);
-
-				FieldInfo info = AccessTools.Field(typeof(SelectionDrawer), "selectTimes");
-				object o = info.GetValue(null);
-				Ext_Pawn.CalculateSelectionBracketPositionsWorldForMultiCellPawns(brackets, vehicle, newDrawPos, vehicle.RotatedSize.ToVector2(), (Dictionary<object, float>)o, Vector2.one, angle, 1f);
+				Ext_Pawn.CalculateSelectionBracketPositionsWorldForMultiCellPawns(brackets, vehicle, vehicle.DrawPos, vehicle.RotatedSize.ToVector2(), SelectionDrawer.SelectTimes, Vector2.one, angle, 1f);
 				
 				int num = Mathf.CeilToInt(angle);
 				for (int i = 0; i < 4; i++)
 				{
 					Quaternion rotation = Quaternion.AngleAxis(num, Vector3.up);
-					Graphics.DrawMesh(MeshPool.plane10, brackets[i], rotation, MaterialDefOf.SelectionBracketMat, 0);
+					Graphics.DrawMesh(MeshPool.plane10, brackets[i], rotation, overrideMat ?? MaterialPresets.SelectionBracketMat, 0);
 					num -= 90;
 				}
 				return false;
 			}
-			//Add for building too?
 			return true;
 		}
 
 		/// <summary>
-		/// Create custom water footprints, resembling a wake behind the boat
+		/// Divert render call to instead render full vehicle in UI
 		/// </summary>
-		/// <param name="___pawn"></param>
-		/// <param name="___lastFootprintPlacePos"></param>
-		/// <returns></returns>
-		public static bool BoatWakesTicker(Pawn ___pawn, ref Vector3 ___lastFootprintPlacePos)
+		/// <param name="thing"></param>
+		public static bool CellInspectorDrawVehicle(Thing thing, ref int ___numLines)
 		{
-			if (___pawn is VehiclePawn vehicle && vehicle.IsBoat())
+			if (thing is VehiclePawn vehicle)
 			{
-				if ((vehicle.Drawer.DrawPos - ___lastFootprintPlacePos).MagnitudeHorizontalSquared() > 0.1)
+				float num = ___numLines * LineHeight;
+				List<object> selectedObjects = Find.Selector.SelectedObjects;
+				Rect rect = new Rect(LineHeight / 2, num + LineHeight / 2, WindowWidth - LineHeight, LineHeight);
+				if (selectedObjects.Contains(thing))
 				{
-					Vector3 drawPos = vehicle.Drawer.DrawPos;
-					if (drawPos.ToIntVec3().InBounds(vehicle.Map) && !vehicle.beached)
-					{
-						FleckMaker.WaterSplash(drawPos, vehicle.Map, 7 * vehicle.VehicleDef.properties.wakeMultiplier, vehicle.VehicleDef.properties.wakeSpeed);
-						___lastFootprintPlacePos = drawPos;
-					}
+					Widgets.DrawHighlight(rect);
 				}
-				else if (VehicleMod.settings.main.passiveWaterWaves && Find.TickManager.TicksGame % 360 == 0)
+				else if (___numLines % 2 == 1)
 				{
-					float offset = Mathf.PingPong(Find.TickManager.TicksGame / 10, vehicle.VehicleDef.graphicData.drawSize.y / 4);
-					FleckMaker.WaterSplash(vehicle.Drawer.DrawPos - new Vector3(0, 0, offset), vehicle.Map, vehicle.VehicleDef.properties.wakeMultiplier, vehicle.VehicleDef.properties.wakeSpeed);
+					Widgets.DrawLightHighlight(rect);
 				}
+				rect = new Rect(LineHeight, num + LineHeight / 2 + 1f, ThingIconSize, ThingIconSize);
+				VehicleGraphics.DrawVehicle(rect, vehicle);
+				rect = new Rect(58f, num + LineHeight / 2, 370f, LineHeight);
+				Widgets.Label(rect, thing.LabelMouseover);
+				___numLines++;
 				return false;
 			}
 			return true;
 		}
 
-		public static bool VehicleTweenedPosRoot(Pawn ___pawn, ref Vector3 __result)
+		public static bool ProcessVehiclePostTickVisuals(Pawn __instance, int ticksPassed, CellRect viewRect)
 		{
-			if (___pawn is VehiclePawn vehicle)
+			if (__instance is VehiclePawn vehicle)
 			{
-				if (!vehicle.Spawned || vehicle.vPather == null)
+				if (!vehicle.Suspended && vehicle.Spawned)
 				{
-					__result = vehicle.Position.ToVector3Shifted();
-					return false;
+					if (Current.ProgramState != ProgramState.Playing || viewRect.Contains(vehicle.Position))
+					{
+						vehicle.Drawer.ProcessPostTickVisuals(ticksPassed);
+					}
+					vehicle.rotationTracker.ProcessPostTickVisuals(ticksPassed);
 				}
-				float num = vehicle.VehicleMovedPercent();
-				__result = vehicle.vPather.nextCell.ToVector3Shifted() * num + vehicle.Position.ToVector3Shifted() * (1f - num); //+ PawnCollisionOffset?
 				return false;
 			}
 			return true;
@@ -194,6 +266,54 @@ namespace Vehicles
 			}
 		}
 
+		public static bool RenderVehicleOutOfFuelOverlay(OverlayDrawer __instance, Thing t)
+		{
+			if (t is VehiclePawn vehicle)
+			{
+				//Material material = MaterialPool.MatFrom(vehicle.CompFueledTravel?.Props.FuelIcon ?? ThingDefOf.Chemfuel.uiIcon, ShaderDatabase.MetaOverlay, Color.white);
+				//RenderPulsingOverlay.Invoke(__instance, new object[] { t, material, 5, false });
+				//RenderPulsingOverlay.Invoke(__instance, new object[] { t, OutOfFuelMat, 6, true });
+				//return false;
+			}
+			return true;
+		}
+
+		public static IEnumerable<CodeInstruction> RenderOverlaysCenterVehicle(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.opcode == OpCodes.Stloc_0 && instructionList[i - 1].Calls(TrueCenter_Baseline))
+				{
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_1);
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(Rendering), nameof(Rendering.VehicleTrueCenterReroute)));
+				}
+
+				yield return instruction;
+			}
+		}
+
+		public static Vector3 VehicleTrueCenterReroute(Vector3 trueCenter, Thing thing)
+		{
+			if (thing is VehiclePawn vehicle)
+			{
+				return vehicle.OverlayCenter;
+			}
+			return trueCenter;
+		}
+
+		public static bool TrueCenterVehicle(Thing t, ref Vector3 __result)
+		{
+			if (t is VehiclePawn vehicle)
+			{
+				__result = vehicle.TrueCenter();
+				return false;
+			}
+			return true;
+		}
+
 		/* ---------------- Hooks onto Targeter calls ---------------- */
 		public static void DrawTargeters()
 		{
@@ -208,6 +328,11 @@ namespace Vehicles
 		public static void TargeterUpdate()
 		{
 			Targeters.UpdateTargeters();
+		}
+
+		public static void TargeterStop()
+		{
+			Targeters.StopAllTargeters();
 		}
 		/* ----------------------------------------------------------- */
 	}

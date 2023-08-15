@@ -17,7 +17,7 @@ namespace Vehicles
 				List<bool> successfulGenerations = new List<bool>();
 
 				VehicleMod.PopulateCachedFields();
-				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefs)
+				foreach (VehicleDef def in DefDatabase<VehicleDef>.AllDefsListForReading)
 				{
 					bool fields = PopulateSaveableFields(def);
 					bool upgrades = true;// PopulateSaveableUpgrades(def);
@@ -28,7 +28,7 @@ namespace Vehicles
 						VehicleMod.settingsDisabledFor.Add(def.defName);
 					}
 				}
-				if (successfulGenerations.All(b => b == false))
+				if (!successfulGenerations.NullOrEmpty() && successfulGenerations.All(b => b == false))
 				{
 					Log.Error($"SaveableFields have failed for every VehicleDef. Consider turning off the ModifiableSettings option in the ModSettings to bypass customizable field generation. This will require a restart.");
 				}

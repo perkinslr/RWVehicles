@@ -9,14 +9,15 @@ using SmashTools;
 
 namespace Vehicles
 {
-	[StaticConstructorOnStartup]
+	//[StaticConstructorOnStartup]
 	internal static class FishingCompatibility
 	{
 		public static Dictionary<ThingDef, int> fishDictionaryTemperateBiomeFreshWater = new Dictionary<ThingDef, int>();
 		public static Dictionary<ThingDef, int> fishDictionaryTropicalBiomeFreshWater = new Dictionary<ThingDef, int>();
 		public static Dictionary<ThingDef, int> fishDictionaryColdBiomeFreshWater = new Dictionary<ThingDef, int>();
 		public static Dictionary<ThingDef, int> fishDictionarySaltWater = new Dictionary<ThingDef, int>();
-		public static bool fishingActivated = false;
+		
+		public static bool Active { get; private set; }
 
 		static FishingCompatibility()
 		{

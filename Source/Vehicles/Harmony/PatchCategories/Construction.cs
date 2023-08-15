@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Reflection.Emit;
 using HarmonyLib;
 using Verse;
 using Verse.Sound;
@@ -26,6 +27,15 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.PropertyGetter(typeof(DesignationCategoryDef), nameof(DesignationCategoryDef.ResolvedAllowedDesignators)),
 				postfix: new HarmonyMethod(typeof(Construction),
 				nameof(RemoveDisabledVehicles)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Designator_Deconstruct), nameof(Designator.CanDesignateThing)),
+				postfix: new HarmonyMethod(typeof(Construction),
+				nameof(AllowDeconstructVehicle)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(GenLeaving), nameof(GenLeaving.DoLeavingsFor), new Type[] { typeof(Thing), typeof(Map), typeof(DestroyMode), typeof(List<Thing>) }),
+				prefix: new HarmonyMethod(typeof(Construction),
+				nameof(DoUnsupportedVehicleRefunds)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn), nameof(Pawn.Destroy)),
+				transpiler: new HarmonyMethod(typeof(Construction),
+				nameof(ValidDestroyModeForVehicles)));
 		}
 
 		public static bool CompleteConstructionVehicle(Pawn worker, Frame __instance)
@@ -45,7 +55,18 @@ namespace Vehicles
 				GenSpawn.Spawn(vehicle, __instance.Position, map, __instance.Rotation, WipeMode.FullRefund, false);
 				worker.records.Increment(RecordDefOf.ThingsConstructed);
 				
-				vehicle.Rename();
+				if (!DebugSettings.godMode) //quick spawning for development
+				{
+					vehicle.Rename();
+				}
+				else
+				{
+					foreach (VehicleComp vehicleComp in vehicle.AllComps.Where(comp => comp is VehicleComp))
+					{
+						vehicleComp.SpawnedInGodMode();
+					}
+				}
+
 				//Quality?
 				//Art?
 				//Tale RecordTale LongConstructionProject?
@@ -117,7 +138,19 @@ namespace Vehicles
 						def.soundBuilt.PlayOneShot(new TargetInfo(loc, map, false));
 					}
 					VehiclePawn vehicleSpawned = (VehiclePawn)GenSpawn.Spawn(vehiclePawn, loc, map, rot, WipeMode.FullRefund, false);
-					vehicleSpawned.Rename();
+
+					if (!DebugSettings.godMode) //quick spawning for development
+					{
+						vehicleSpawned.Rename();
+					}
+					else
+					{
+						foreach (VehicleComp vehicleComp in vehicleSpawned.AllComps.Where(comp => comp is VehicleComp))
+						{
+							vehicleComp.SpawnedInGodMode();
+						}
+					}
+					
 					__result = vehicleSpawned;
 					AchievementsHelper.TriggerVehicleConstructionEvent(vehicleSpawned);
 					return false;
@@ -156,7 +189,7 @@ namespace Vehicles
 			{
 				try
 				{
-					var positionManager = map.GetCachedMapComponent<VehiclePositionManager>();
+					VehiclePositionManager positionManager = map.GetCachedMapComponent<VehiclePositionManager>();
 					if (positionManager.PositionClaimed(loc))
 					{
 						VehiclePawn inPlaceVehicle = positionManager.ClaimedBy(loc);
@@ -184,7 +217,7 @@ namespace Vehicles
 			{
 				try
 				{
-					var positionManager = map.GetCachedMapComponent<VehiclePositionManager>();
+					VehiclePositionManager positionManager = map.GetCachedMapComponent<VehiclePositionManager>();
 					if (positionManager.PositionClaimed(loc))
 					{
 						VehiclePawn inPlaceVehicle = positionManager.ClaimedBy(loc);
@@ -263,12 +296,12 @@ namespace Vehicles
 				{
 					if (AccessTools.Field(typeof(Designator_Build), "entDef").GetValue(buildDesignator) is VehicleBuildDef buildDef && buildDef.thingToSpawn is VehicleDef vehicleDef)
 					{
-						VehicleEnabledFor enabled = vehicleDef.TryGetValue(typeof(VehicleDef), nameof(VehicleDef.enabled), vehicleDef.enabled);
+						VehicleEnabledFor enabled = SettingsCache.TryGetValue(vehicleDef, typeof(VehicleDef), nameof(VehicleDef.enabled), vehicleDef.enabled);
 						if (enabled == VehicleEnabledFor.None || enabled == VehicleEnabledFor.Raiders)
 						{
-							if (VehicleMod.settings.main.showDisabledVehicles)
+							if (!VehicleMod.settings.main.hideDisabledVehicles)
 							{
-								designator.Disable("VehicleGizmoDisabledTooltip".Translate());
+								designator.Disable("VF_GizmoDisabledTooltip".Translate());
 							}
 							else
 							{
@@ -279,6 +312,64 @@ namespace Vehicles
 				}
 				yield return designator;
 			}
+		}
+
+		public static void AllowDeconstructVehicle(Designator_Deconstruct __instance, Thing t, ref AcceptanceReport __result)
+		{
+			if (t is VehiclePawn vehicle && vehicle.DeconstructibleBy(Faction.OfPlayer))
+			{
+				if (__instance.Map.designationManager.DesignationOn(t, DesignationDefOf.Deconstruct) != null)
+				{
+					__result = false;
+				}
+				else if (__instance.Map.designationManager.DesignationOn(t, DesignationDefOf.Uninstall) != null)
+				{
+					__result = false;
+				}
+				else
+				{
+					__result = true;
+				}
+			}
+		}
+
+		public static bool DoUnsupportedVehicleRefunds(Thing diedThing, Map map, DestroyMode mode, List<Thing> listOfLeavingsOut = null)
+		{
+			if (diedThing is VehiclePawn vehicle)
+			{
+				vehicle.RefundMaterials(map, mode, listOfLeavingsOut);
+				return false;
+			}
+			return true;
+		}
+
+		public static IEnumerable<CodeInstruction> ValidDestroyModeForVehicles(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if ((instruction.opcode == OpCodes.Brfalse || instruction.opcode == OpCodes.Brfalse_S) && !instructionList.OutOfBounds(i - 1) && instructionList[i - 1].opcode == OpCodes.Ldarg_1)
+				{
+					List<Label> labels = instruction.labels;
+					yield return instruction;
+					instruction = instructionList[++i];
+
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_0);
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_1);
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(Construction), nameof(VehicleValidDestroyMode)));
+					yield return new CodeInstruction(opcode: OpCodes.Brtrue, operand: labels.FirstOrDefault());
+				}
+
+				yield return instruction;
+			}
+		}
+
+		public static bool VehicleValidDestroyMode(Pawn pawn, DestroyMode destroyMode)
+		{
+			return pawn is VehiclePawn && destroyMode != DestroyMode.QuestLogic && destroyMode != DestroyMode.FailConstruction && destroyMode != DestroyMode.WillReplace;
 		}
 	}
 }

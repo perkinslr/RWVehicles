@@ -1,13 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Emit;
+using System.Threading;
 using HarmonyLib;
 using Verse;
 using Verse.AI;
 using RimWorld;
 using RimWorld.Planet;
+using UnityEngine;
 using SmashTools;
+using SmashTools.Performance;
 
 namespace Vehicles
 {
@@ -27,44 +31,33 @@ namespace Vehicles
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pawn_PathFollower), nameof(Pawn_PathFollower.StartPath)),
 				prefix: new HarmonyMethod(typeof(VehiclePathing),
 				nameof(StartVehiclePath)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PathFinder), nameof(PathFinder.FindPath), new Type[] { typeof(IntVec3), typeof(LocalTargetInfo), typeof(TraverseParms), typeof(PathEndMode), typeof(PathFinderCostTuning) }),
-				transpiler: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(PathAroundVehicles)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Reachability), nameof(Reachability.CanReach), new Type[] { typeof(IntVec3), typeof(LocalTargetInfo), typeof(PathEndMode), typeof(TraverseParms) }),
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(GenAdj), nameof(GenAdj.AdjacentTo8WayOrInside), parameters: new Type[] { typeof(IntVec3), typeof(Thing) }),
 				prefix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(CanReachVehiclePosition)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(GenGrid), nameof(GenGrid.Impassable)),
+				nameof(AdjacentTo8WayOrInsideVehicle)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(GenAdj), nameof(GenAdj.OccupiedRect), parameters: new Type[] { typeof(Thing) }),
+				prefix: new HarmonyMethod(typeof(VehiclePathing),
+				nameof(OccupiedRectVehicles)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pathing), nameof(Pathing.RecalculateAllPerceivedPathCosts)),
 				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(ImpassableThroughVehicle)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PathGrid), nameof(PathGrid.Walkable)),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(WalkableThroughVehicle)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PathGrid), nameof(PathGrid.WalkableFast), new Type[] { typeof(IntVec3) }),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(WalkableFastThroughVehicleIntVec3)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PathGrid), nameof(PathGrid.WalkableFast), new Type[] { typeof(int), typeof(int) }),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(WalkableFastThroughVehicleInt2)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(PathGrid), nameof(PathGrid.WalkableFast), new Type[] { typeof(int) }),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(WalkableFastThroughVehicleInt)));
-
+				nameof(RecalculateAllPerceivedPathCostForVehicle)));
 			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Pathing), nameof(Pathing.RecalculatePerceivedPathCostAt)),
 				postfix: new HarmonyMethod(typeof(VehiclePathing),
 				nameof(RecalculatePerceivedPathCostForVehicle)));
 
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(RegionDirtyer), "Notify_ThingAffectingRegionsSpawned"),
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Thing), nameof(Thing.DeSpawn)),
+				transpiler: new HarmonyMethod(typeof(VehiclePathing),
+				nameof(DeSpawnAndUpdateVehicleRegionsTranspiler)));
+			VehicleHarmony.Patch(original: AccessTools.Method(typeof(Thing), nameof(Thing.SpawnSetup)),
+				transpiler: new HarmonyMethod(typeof(VehiclePathing),
+				nameof(SpawnAndUpdateVehicleRegionsTranspiler)));
+			VehicleHarmony.Patch(original: AccessTools.PropertySetter(typeof(Thing), nameof(Thing.Position)),
 				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(Notify_ThingAffectingVehicleRegionsSpawned)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(RegionDirtyer), "Notify_ThingAffectingRegionsDespawned"),
+				nameof(SetPositionAndUpdateVehicleRegions)));
+			VehicleHarmony.Patch(original: AccessTools.PropertySetter(typeof(Thing), nameof(Thing.Rotation)),
+				prefix: new HarmonyMethod(typeof(VehiclePathing),
+				nameof(SetRotationAndUpdateVehicleRegionsClipping)),
 				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(Notify_ThingAffectingVehicleRegionsDespawned)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(RegionListersUpdater), nameof(RegionListersUpdater.RegisterInRegions)),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(RegisterInVehicleRegions)));
-			VehicleHarmony.Patch(original: AccessTools.Method(typeof(RegionListersUpdater), nameof(RegionListersUpdater.DeregisterInRegions)),
-				postfix: new HarmonyMethod(typeof(VehiclePathing),
-				nameof(DeregisterInVehicleRegions)));
+				nameof(SetRotationAndUpdateVehicleRegions)));
 		}
 
 		/// <summary>
@@ -73,7 +66,6 @@ namespace Vehicles
 		/// <param name="clickCell"></param>
 		/// <param name="pawn"></param>
 		/// <param name="__result"></param>
-		/// <returns></returns>
 		public static bool GotoLocationVehicles(IntVec3 clickCell, Pawn pawn, ref FloatMenuOption __result)
 		{
 			if (pawn is VehiclePawn vehicle)
@@ -82,48 +74,44 @@ namespace Vehicles
 				{
 					return false;
 				}
-				if (VehicleMod.settings.main.fullVehiclePathing && vehicle.LocationRestrictedBySize(clickCell))
-				{
-					Messages.Message("VehicleCannotFit".Translate(), MessageTypeDefOf.RejectInput);
-					return false;
-				}
-
+				
 				if (vehicle.CompFueledTravel != null && vehicle.CompFueledTravel.EmptyTank)
 				{
-					Messages.Message("VehicleOutOfFuel".Translate(), MessageTypeDefOf.RejectInput);
+					Messages.Message("VF_OutOfFuel".Translate(), MessageTypeDefOf.RejectInput);
 					return false;
 				}
 
 				VehicleMapping mapping = vehicle.Map.GetCachedMapComponent<VehicleMapping>();
-				Debug.Message($"Click: {clickCell} Terrain={vehicle.Map.terrainGrid.TerrainAt(clickCell).LabelCap} CalculatedCost={mapping[vehicle.VehicleDef].VehiclePathGrid.CalculatedCostAt(clickCell)}" +
-					$" GridCost={mapping[vehicle.VehicleDef].VehiclePathGrid.pathGrid[vehicle.Map.cellIndices.CellToIndex(clickCell)]} VanillaCost={vehicle.Map.terrainGrid.TerrainAt(clickCell).pathCost} VanillaCalcCost={vehicle.Map.pathing.Normal.pathGrid.CalculatedCostAt(clickCell, true, IntVec3.Invalid)}");
 				
 				int num = GenRadial.NumCellsInRadius(2.9f);
-				int i = 0;
 				IntVec3 curLoc;
-				while (i < num)
+				for (int i = 0; i < num; i++)
 				{
 					curLoc = GenRadial.RadialPattern[i] + clickCell;
-					if (GenGridVehicles.Standable(curLoc, vehicle, vehicle.Map))
+
+					if (GenGridVehicles.Standable(curLoc, vehicle, vehicle.Map) && (!VehicleMod.settings.main.fullVehiclePathing || vehicle.DrivableRectOnCell(curLoc)))
 					{
 						if (curLoc == vehicle.Position || vehicle.beached)
 						{
 							__result = null;
 							return false;
 						}
+						//if (!vehicle.CellRectStandable(vehicle.Map, curLoc, Rot4.East) || !vehicle.CellRectStandable(vehicle.Map, curLoc, Rot4.North))
+						//{
+						//	continue;
+						//}
 						if (!VehicleReachabilityUtility.CanReachVehicle(vehicle, curLoc, PathEndMode.OnCell, Danger.Deadly, TraverseMode.ByPawn))
 						{
-							Debug.Message($"Cant Reach {curLoc} with {vehicle.Label}");
-							__result = new FloatMenuOption("VehicleCannotMoveToCell".Translate(vehicle.LabelCap), null, MenuOptionPriority.Default, null, null, 0f, null, null);
+							__result = new FloatMenuOption("VF_CannotMoveToCell".Translate(vehicle.LabelCap), null, MenuOptionPriority.Default, null, null, 0f, null, null);
 							return false;
 						}
+						
 						__result = new FloatMenuOption("GoHere".Translate(), delegate ()
 						{
 							Job job = new Job(JobDefOf.Goto, curLoc);
 							bool isOnEdge = CellRect.WholeMap(vehicle.Map).IsOnEdge(clickCell, 3);
 							bool exitCell = vehicle.Map.exitMapGrid.IsExitCell(clickCell);
-							bool vehicleCellsOverlapExit = vehicle.InhabitedCellsProjected(clickCell, Rot8.Invalid).NotNullAndAny(cell => pawn.Map.exitMapGrid.IsExitCell(cell));
-							Debug.Message($"Exit Map? CellOnEdge={isOnEdge} ExitCell={exitCell} VehicleCellsOverlap={vehicleCellsOverlapExit}");
+							bool vehicleCellsOverlapExit = vehicle.InhabitedCellsProjected(clickCell, Rot8.Invalid).NotNullAndAny(cell => cell.InBounds(pawn.Map) && pawn.Map.exitMapGrid.IsExitCell(cell));
 							if (exitCell || vehicleCellsOverlapExit)
 							{
 								job.exitMapOnArrival = true;
@@ -151,10 +139,6 @@ namespace Vehicles
 							autoTakeablePriority = 10f
 						};
 						return false;
-					}
-					else
-					{
-						i++;
 					}
 				}
 				__result = null;
@@ -218,6 +202,19 @@ namespace Vehicles
 			if (___pawn is VehiclePawn vehicle)
 			{
 				vehicle.vPather.StartPath(dest, peMode);
+				return false;
+			}
+			return true;
+		}
+
+		public static bool AdjacentTo8WayOrInsideVehicle(IntVec3 root, Thing t, ref bool __result)
+		{
+			if (t is VehiclePawn vehicle)
+			{
+				IntVec2 size = vehicle.def.size;
+				Rot4 rot = vehicle.Rotation;
+				Ext_Vehicles.AdjustForVehicleOccupiedRect(ref size, ref rot);
+				__result = root.AdjacentTo8WayOrInside(vehicle.Position, rot, size);
 				return false;
 			}
 			return true;
@@ -329,15 +326,105 @@ namespace Vehicles
 				__result = !PathingHelper.VehicleImpassableInCell(___map, ___map.cellIndices.IndexToCell(index));
 			}
 		}
+		
+		public static bool OccupiedRectVehicles(Thing t, ref CellRect __result)
+		{
+			if (t is VehiclePawn vehicle)
+			{
+				__result = vehicle.VehicleRect();
+				return false;
+			}
+			return true;
+		}
+
+		public static void RecalculateAllPerceivedPathCostForVehicle(PathingContext ___normal)
+		{
+			PathingHelper.RecalculateAllPerceivedPathCosts(___normal.map);
+		}
 
 		public static void RecalculatePerceivedPathCostForVehicle(IntVec3 c, PathingContext ___normal)
 		{
 			PathingHelper.RecalculatePerceivedPathCostAt(c, ___normal.map);
 		}
 
+		public static IEnumerable<CodeInstruction> DeSpawnAndUpdateVehicleRegionsTranspiler(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			MethodInfo coverGridDeregisterMethod = AccessTools.Method(typeof(TickManager), nameof(TickManager.DeRegisterAllTickabilityFor));
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.Calls(coverGridDeregisterMethod))
+				{
+					yield return instruction;
+					instruction = instructionList[++i];
+
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_0);
+					yield return new CodeInstruction(opcode: OpCodes.Ldloc_0);
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(VehiclePathing), nameof(VehiclePathing.DeSpawnAndNotifyVehicleRegions)));
+				}
+
+				yield return instruction;
+			}
+		}
+
+		public static IEnumerable<CodeInstruction> SpawnAndUpdateVehicleRegionsTranspiler(IEnumerable<CodeInstruction> instructions)
+		{
+			List<CodeInstruction> instructionList = instructions.ToList();
+
+			MethodInfo coverGridDeregisterMethod = AccessTools.Method(typeof(CoverGrid), nameof(CoverGrid.Register));
+			for (int i = 0; i < instructionList.Count; i++)
+			{
+				CodeInstruction instruction = instructionList[i];
+
+				if (instruction.Calls(coverGridDeregisterMethod))
+				{
+					yield return instruction;
+					instruction = instructionList[++i];
+
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_0);
+					yield return new CodeInstruction(opcode: OpCodes.Ldarg_1);
+					yield return new CodeInstruction(opcode: OpCodes.Call, operand: AccessTools.Method(typeof(VehiclePathing), nameof(VehiclePathing.SpawnAndNotifyVehicleRegions)));
+				}
+
+				yield return instruction;
+			}
+		}
+
+		public static void SetPositionAndUpdateVehicleRegions(Thing __instance)
+		{
+			if (__instance.Spawned)
+			{
+				PathingHelper.ThingAffectingRegionsOrientationChanged(__instance, __instance.Map);
+			}
+		}
+
+		public static bool SetRotationAndUpdateVehicleRegionsClipping(Thing __instance, Rot4 value)
+		{
+			if (__instance is VehiclePawn vehicle && vehicle.Spawned)
+			{
+				if (!vehicle.OccupiedRectShifted(IntVec2.Zero, value).InBounds(vehicle.Map))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		public static void SetRotationAndUpdateVehicleRegions(Thing __instance)
+		{
+			if (__instance.Spawned && (__instance.def.size.x != 1 || __instance.def.size.z != 1))
+			{
+				PathingHelper.ThingAffectingRegionsOrientationChanged(__instance, __instance.Map);
+			}
+		}
+
 		public static void Notify_ThingAffectingVehicleRegionsSpawned(Thing b)
 		{
-			if (b.Spawned) //For some reason other mods love to patch the SpawnSetup method and despawn the object. Extra check is necessary
+			//For some reason other mods love to patch the SpawnSetup method and despawn the object immediately. Extra check is necessary
+			if (b.Spawned)
 			{
 				PathingHelper.ThingAffectingRegionsSpawned(b, b.Map);
 			}
@@ -345,55 +432,68 @@ namespace Vehicles
 
 		public static void Notify_ThingAffectingVehicleRegionsDespawned(Thing b)
 		{
-			if (b.Spawned) //For some reason other mods love to patch the SpawnSetup method and despawn the object. Extra check is necessary
+			//For some reason other mods love to patch the SpawnSetup method and despawn the object immediately. Extra check is necessary
+			if (b.Spawned)
 			{
 				PathingHelper.ThingAffectingRegionsDeSpawned(b, b.Map);
 			}
 		}
 
-		public static void RegisterInVehicleRegions(Thing thing, Map map)
+
+		/* ---- Helper Methods related to patches ---- */
+
+		private static void SpawnAndNotifyVehicleRegions(Thing thing, Map map)
 		{
-			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefs)
+			RegisterInVehicleRegions(thing, map);
+			PathingHelper.ThingAffectingRegionsSpawned(thing, map);
+		}
+
+		private static void DeSpawnAndNotifyVehicleRegions(Thing thing, Map map)
+		{
+			DeregisterInVehicleRegions(thing, map);
+			PathingHelper.ThingAffectingRegionsDeSpawned(thing, map);
+		}
+
+		private static void RegisterInVehicleRegions(Thing thing, Map map)
+		{
+			VehicleMapping mapping = map.GetCachedMapComponent<VehicleMapping>();
+			if (mapping.ThreadAvailable)
 			{
-				VehicleRegionListersUpdater.RegisterInRegions(thing, map, vehicleDef);
+				mapping.dedicatedThread.Queue(new AsyncAction(() => RegisterInRegions(thing, mapping), () => map != null && map.Index > -1));
+			}
+			else
+			{
+				RegisterInRegions(thing, mapping);
 			}
 		}
 
-		public static void DeregisterInVehicleRegions(Thing thing, Map map)
+		private static void DeregisterInVehicleRegions(Thing thing, Map map)
 		{
-			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefs)
+			VehicleMapping mapping = map.GetCachedMapComponent<VehicleMapping>();
+			if (mapping.ThreadAvailable)
 			{
-				VehicleRegionListersUpdater.DeregisterInRegions(thing, map, vehicleDef);
+				mapping.dedicatedThread.Queue(new AsyncAction(() => DeregisterInRegions(thing, mapping), () => map != null && map.Index > -1));
+			}
+			else
+			{
+				DeregisterInRegions(thing, mapping);
 			}
 		}
 
-		[DebugAction(category = VehicleHarmony.VehiclesLabel, name = "Draw Regions", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
-		private static void DebugDrawRegions()
+		private static void RegisterInRegions(Thing thing, VehicleMapping mapping)
 		{
-			List<DebugMenuOption> listCheckbox = new List<DebugMenuOption>();
-			listCheckbox.Add(new DebugMenuOption("Clear", DebugMenuOptionMode.Action, delegate ()
+			foreach (VehicleDef vehicleDef in mapping.Owners)
 			{
-				DebugHelper.drawRegionsFor = null;
-				DebugHelper.debugRegionType = DebugRegionType.None;
-			}));
-			foreach (VehicleDef vehicleDef in DefDatabase<VehicleDef>.AllDefs.OrderBy(d => d.defName))
-			{
-				listCheckbox.Add(new DebugMenuOption(vehicleDef.defName, DebugMenuOptionMode.Action, delegate ()
-				{
-					List<DebugMenuOption> listCheckbox2 = new List<DebugMenuOption>();
-
-					foreach (string name in Enum.GetNames(typeof(DebugRegionType)))
-					{
-						listCheckbox2.Add(new DebugMenuOption(name, DebugMenuOptionMode.Action, delegate ()
-						{
-							DebugHelper.drawRegionsFor = vehicleDef;
-							DebugHelper.debugRegionType = (DebugRegionType)Enum.Parse(typeof(DebugRegionType), name);
-						}));
-					}
-					Find.WindowStack.Add(new Dialog_DebugOptionListLister(listCheckbox2));
-				}));
+				VehicleRegionListersUpdater.RegisterInRegions(thing, mapping, vehicleDef);
 			}
-			Find.WindowStack.Add(new Dialog_DebugOptionListLister(listCheckbox));
+		}
+
+		private static void DeregisterInRegions(Thing thing, VehicleMapping mapping)
+		{
+			foreach (VehicleDef vehicleDef in mapping.Owners)
+			{
+				VehicleRegionListersUpdater.DeregisterInRegions(thing, mapping, vehicleDef);
+			}
 		}
 	}
 }

@@ -12,8 +12,8 @@ namespace Vehicles
 	/// </summary>
 	public class VehicleRegionAndRoomUpdater
 	{
-		private readonly Map map;
-		private readonly VehicleDef vehicleDef;
+		private readonly VehicleMapping mapping;
+		private readonly VehicleDef createdFor;
 
 		private readonly List<VehicleRegion> newRegions = new List<VehicleRegion>();
 		private readonly List<VehicleRoom> newRooms = new List<VehicleRoom>();
@@ -24,10 +24,10 @@ namespace Vehicles
 
 		private readonly Stack<VehicleRoom> tmpRoomStack = new Stack<VehicleRoom>();
 
-		public VehicleRegionAndRoomUpdater(Map map, VehicleDef vehicleDef)
+		public VehicleRegionAndRoomUpdater(VehicleMapping mapping, VehicleDef createdFor)
 		{
-			this.map = map;
-			this.vehicleDef = vehicleDef;
+			this.mapping = mapping;
+			this.createdFor = createdFor;
 		}
 
 		/// <summary>
@@ -59,7 +59,7 @@ namespace Vehicles
 			{
 				Log.Warning($"Called RebuildAllVehicleRegions but VehicleRegionAndRoomUpdater is disabled. VehicleRegions won't be rebuilt. StackTrace: {StackTraceUtility.ExtractStackTrace()}");
 			}
-			map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionDirtyer.SetAllDirty();
+			mapping[createdFor].VehicleRegionDirtyer.SetAllDirty();
 			TryRebuildVehicleRegions();
 		}
 
@@ -78,7 +78,7 @@ namespace Vehicles
 			{
 				RebuildAllVehicleRegions();
 			}
-			if (!map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionDirtyer.AnyDirty)
+			if (!mapping[createdFor].VehicleRegionDirtyer.AnyDirty)
 			{
 				UpdatingRegion = false;
 				return;
@@ -90,12 +90,12 @@ namespace Vehicles
 				updateStep = "Creating or updating rooms";
 				CreateOrUpdateVehicleRooms();
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
-				Log.Error($"Exception while rebuilding vehicle regions for {vehicleDef}. Last step: {updateStep} Exception={ex.Message}");
+				Log.Error($"Exception while rebuilding vehicle regions for {createdFor}. Last step: {updateStep} Exception={ex.Message}");
 			}
 			newRegions.Clear();
-			map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionDirtyer.SetAllClean();
+			mapping[createdFor].VehicleRegionDirtyer.SetAllClean();
 			Initialized = true;
 			UpdatingRegion = false;
 		}
@@ -106,12 +106,12 @@ namespace Vehicles
 		private void RegenerateNewVehicleRegions()
 		{
 			newRegions.Clear();
-			HashSet<IntVec3> cells = map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionDirtyer.DirtyCells;
+			HashSet<IntVec3> cells = mapping[createdFor].VehicleRegionDirtyer.DirtyCells;
 			foreach (IntVec3 cell in cells)
 			{
-				if (VehicleGridsUtility.GetRegion(cell, map, vehicleDef, RegionType.Set_All) is null)
+				if (VehicleGridsUtility.GetRegion(cell, mapping.map, createdFor, RegionType.Set_All) is null)
 				{
-					VehicleRegion region = map.GetCachedMapComponent<VehicleMapping>()[vehicleDef].VehicleRegionMaker.TryGenerateRegionFrom(cell);
+					VehicleRegion region = mapping[createdFor].VehicleRegionMaker.TryGenerateRegionFrom(cell);
 					if (region != null)
 					{
 						newRegions.Add(region);
@@ -173,7 +173,7 @@ namespace Vehicles
 					{
 						Log.Error("Region type doesn't allow multiple regions per room but there are >1 regions in this group.");
 					}
-					VehicleRoom room = VehicleRoom.MakeNew(map, vehicleDef);
+					VehicleRoom room = VehicleRoom.MakeNew(mapping.map, createdFor);
 					currentRegionGroup[0].Room = room;
 					newRooms.Add(room);
 				}
@@ -182,7 +182,7 @@ namespace Vehicles
 					VehicleRoom room2 = FindCurrentRegionGroupNeighborWithMostRegions(out bool flag);
 					if (room2 is null)
 					{
-						VehicleRoom item = VehicleRegionTraverser.FloodAndSetRooms(currentRegionGroup[0], map, vehicleDef, null);
+						VehicleRoom item = VehicleRegionTraverser.FloodAndSetRooms(currentRegionGroup[0], mapping.map, createdFor, null);
 						newRooms.Add(item);
 					}
 					else if (!flag)
@@ -195,7 +195,7 @@ namespace Vehicles
 					}
 					else
 					{
-						VehicleRegionTraverser.FloodAndSetRooms(currentRegionGroup[0], map, vehicleDef, room2);
+						VehicleRegionTraverser.FloodAndSetRooms(currentRegionGroup[0], mapping.map, createdFor, room2);
 						reusedOldRooms.Add(room2);
 					}
 				}

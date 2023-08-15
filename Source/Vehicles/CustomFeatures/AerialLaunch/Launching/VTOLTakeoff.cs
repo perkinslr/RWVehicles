@@ -11,11 +11,8 @@ namespace Vehicles
 {
 	public class VTOLTakeoff : DefaultTakeoff
 	{
-		public SimpleCurve verticalLaunchCurve;
-		public SimpleCurve verticalLandingCurve;
-		public SimpleCurve verticalLaunchRotationCurve;
-		public SimpleCurve verticalLandingRotationCurve;
 		protected int ticksPassedVertical;
+		protected float effectsToThrowVertical;
 
 		public VTOLTakeoff()
 		{
@@ -23,199 +20,129 @@ namespace Vehicles
 
 		public VTOLTakeoff(VTOLTakeoff reference, VehiclePawn vehicle) : base(reference, vehicle)
 		{
-			verticalLaunchCurve = reference.verticalLaunchCurve;
-			verticalLandingCurve = reference.verticalLandingCurve;
-			verticalLaunchRotationCurve = reference.verticalLaunchRotationCurve;
-			verticalLandingRotationCurve = reference.verticalLandingRotationCurve;
 		}
 
-		public VerticalProtocolProperties VerticalLaunchProperties => launchProperties as VerticalProtocolProperties;
-		public VerticalProtocolProperties VerticalLandingProperties => landingProperties as VerticalProtocolProperties;
+		public VerticalProtocolProperties LandingProperties_VTOL => landingProperties as VerticalProtocolProperties;
+		public VerticalProtocolProperties LaunchProperties_VTOL => launchProperties as VerticalProtocolProperties;
 
-		public override string FailLaunchMessage => "SkyfallerLaunchNotValid".Translate();
+		public VerticalProtocolProperties CurAnimationProperties_Vertical => CurAnimationProperties as VerticalProtocolProperties;
 
-		public virtual float TimeInLaunchVTOL => (float)ticksPassedVertical / VerticalLaunchProperties.ticksVertical;
+		protected override int TotalTicks_Landing => base.TotalTicks_Landing + LandingProperties_VTOL.maxTicksVertical;
 
-		public virtual float TimeInLandingVTOL => (float)ticksPassedVertical / VerticalLandingProperties.ticksVertical;
+		protected override int TotalTicks_Takeoff => base.TotalTicks_Takeoff + LaunchProperties_VTOL.maxTicksVertical;
 
-		public override Vector3 DrawPos
+		public virtual float TimeInAnimationVTOL => (float)ticksPassedVertical / CurAnimationProperties_Vertical.maxTicksVertical;
+
+		public override bool FinishedAnimation(VehicleSkyfaller skyfaller)
 		{
-			get
-			{
-				Vector3 vDrawPos = drawPos;
-				if (landing && verticalLandingCurve != null)
-				{
-					vDrawPos.z += verticalLandingCurve.Evaluate(TimeInLandingVTOL);
-				}
-				else if (verticalLaunchCurve != null)
-				{
-					vDrawPos.z += verticalLaunchCurve.Evaluate(TimeInLaunchVTOL);
-				}
-				switch (movementType)
-				{
-					case SkyfallerMovementType.Accelerate:
-						return SkyfallerDrawPosUtility.DrawPos_Accelerate(vDrawPos, ticksPassed, angle, CurrentSpeed);
-					case SkyfallerMovementType.ConstantSpeed:
-						return SkyfallerDrawPosUtility.DrawPos_ConstantSpeed(vDrawPos, ticksPassed, angle, CurrentSpeed);
-					case SkyfallerMovementType.Decelerate:
-						return SkyfallerDrawPosUtility.DrawPos_Decelerate(vDrawPos, ticksPassed, angle, CurrentSpeed);
-					default:
-						Log.ErrorOnce("SkyfallerMovementType not handled: " + movementType, vehicle.thingIDNumber);
-						return SkyfallerDrawPosUtility.DrawPos_Accelerate(vDrawPos, ticksPassed, angle, CurrentSpeed);
-				}
-			}
+			return ticksPassedVertical >= CurAnimationProperties_Vertical.maxTicksVertical && base.FinishedAnimation(skyfaller);
 		}
 
-		public override Command_Action LaunchCommand
+		protected override int AnimationEditorTick_Takeoff(int ticksPassed)
 		{
-			get
-			{
-				Command_Action skyfallerTakeoff = new Command_Action
-				{
-					defaultLabel = "CommandLaunchGroup".Translate(),
-					defaultDesc = "CommandLaunchGroupDesc".Translate(),
-					icon = VehicleTex.LaunchCommandTex,
-					alsoClickIfOtherInGroupClicked = false,
-					action = delegate ()
-					{
-						if (vehicle.CompVehicleLauncher.AnyLeftToLoad)
-						{
-							Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation("ConfirmSendNotCompletelyLoadedPods".Translate(vehicle.LabelCapNoCount), new Action(StartChoosingDestination), false, null));
-							return;
-						}
-						StartChoosingDestination();
-					}
-				};
-				return skyfallerTakeoff;
-			}
+			ticksPassedVertical = ticksPassed.Take(LaunchProperties_VTOL.maxTicksVertical, out int remaining);
+			return base.AnimationEditorTick_Takeoff(remaining);
 		}
 
-		public override bool FinishedLanding(VehicleSkyfaller skyfaller)
+		protected override int AnimationEditorTick_Landing(int ticksPassed)
 		{
-			return ticksPassedVertical <= 0 && base.FinishedLanding(skyfaller);
+			ticksPassed = base.AnimationEditorTick_Landing(ticksPassed);
+			ticksPassedVertical = ticksPassed.Take(LandingProperties_VTOL.maxTicksVertical, out int remaining);
+			return remaining;
 		}
 
-		public override bool FinishedTakeoff(VehicleSkyfaller skyfaller)
+		protected override (Vector3 drawPos, float rotation) AnimateLanding(Vector3 drawPos, float rotation)
 		{
-			return ticksPassedVertical >= VerticalLaunchProperties.ticksVertical && base.FinishedTakeoff(skyfaller);
+			if (!LandingProperties_VTOL.rotationVerticalCurve.NullOrEmpty())
+			{
+				rotation += LandingProperties_VTOL.rotationVerticalCurve.Evaluate(TimeInAnimationVTOL);
+			}
+			if (!LandingProperties_VTOL.zPositionVerticalCurve.NullOrEmpty())
+			{
+				drawPos.z += LandingProperties_VTOL.zPositionVerticalCurve.Evaluate(TimeInAnimationVTOL);
+			}
+			if (!LandingProperties_VTOL.xPositionVerticalCurve.NullOrEmpty())
+			{
+				drawPos.x += LandingProperties_VTOL.xPositionVerticalCurve.Evaluate(TimeInAnimationVTOL);
+			}
+			if (!LandingProperties_VTOL.offsetVerticalCurve.NullOrEmpty())
+			{
+				Vector2 offset = LandingProperties_VTOL.offsetVerticalCurve.EvaluateT(TimeInAnimationVTOL);
+				drawPos += new Vector3(offset.x, 0, offset.y);
+			}
+			return base.AnimateLanding(drawPos, rotation);
 		}
 
-		public override Vector3 AnimateLanding(float layer, bool flip)
+		protected override (Vector3 drawPos, float rotation) AnimateTakeoff(Vector3 drawPos, float rotation)
 		{
-			Vector3 adjustedDrawPos = DrawPos;
-			if (landingProperties?.angleCurve != null)
+			if (!LaunchProperties_VTOL.rotationVerticalCurve.NullOrEmpty())
 			{
-				angle = landingProperties.angleCurve.Evaluate(TimeInAnimation);
+				rotation += LaunchProperties_VTOL.rotationVerticalCurve.Evaluate(TimeInAnimationVTOL);
 			}
-			if (landingProperties?.rotationCurve != null)
+			if (!LaunchProperties_VTOL.zPositionVerticalCurve.NullOrEmpty())
 			{
-				rotation = landingProperties.rotationCurve.Evaluate(TimeInAnimation);
+				drawPos.z += LaunchProperties_VTOL.zPositionVerticalCurve.Evaluate(TimeInAnimationVTOL);
 			}
-			if (landingProperties?.xPositionCurve != null)
+			if (!LaunchProperties_VTOL.xPositionVerticalCurve.NullOrEmpty())
 			{
-				adjustedDrawPos.x += landingProperties.xPositionCurve.Evaluate(TimeInAnimation);
+				drawPos.x += LaunchProperties_VTOL.xPositionVerticalCurve.Evaluate(TimeInAnimationVTOL);
 			}
-			if (landingProperties?.zPositionCurve != null)
+			if (!LaunchProperties_VTOL.offsetVerticalCurve.NullOrEmpty())
 			{
-				adjustedDrawPos.z += landingProperties.zPositionCurve.Evaluate(TimeInAnimation);
+				Vector2 offset = LaunchProperties_VTOL.offsetVerticalCurve.EvaluateT(TimeInAnimationVTOL);
+				drawPos += new Vector3(offset.x, 0, offset.y);
 			}
-
-			if (ticksPassedVertical < VerticalLandingProperties.ticksVertical && verticalLandingRotationCurve != null)
-			{
-				rotation = verticalLandingRotationCurve.Evaluate(TimeInLandingVTOL);
-			}
-
-			adjustedDrawPos.y = layer;
-			vehicle.DrawAt(adjustedDrawPos, rotation, flip);
-			return adjustedDrawPos;
+			return base.AnimateTakeoff(drawPos, rotation);
 		}
 
-		public override Vector3 AnimateTakeoff(float layer, bool flip)
+		protected override void TickMotes()
 		{
-			Vector3 adjustedDrawPos = DrawPos;
-			if (launchProperties?.angleCurve != null)
+			FleckData fleckData = CurAnimationProperties_Vertical.fleckDataVertical;
+			if (fleckData != null && (fleckData.runOutOfStep || (TimeInAnimationVTOL > 0 && TimeInAnimationVTOL < 1)))
 			{
-				angle = launchProperties.angleCurve.Evaluate(TimeInAnimation);
+				effectsToThrowVertical = TryThrowFleck(fleckData, TimeInAnimationVTOL, effectsToThrowVertical);
 			}
-			if (launchProperties?.rotationCurve != null)
-			{
-				rotation = launchProperties.rotationCurve.Evaluate(TimeInAnimation);
-			}
-			if (launchProperties?.xPositionCurve != null)
-			{
-				adjustedDrawPos.x += launchProperties.xPositionCurve.Evaluate(TimeInAnimation);
-			}
-			if (launchProperties?.zPositionCurve != null)
-			{
-				adjustedDrawPos.z += launchProperties.zPositionCurve.Evaluate(TimeInAnimation);
-			}
-
-			if (ticksPassedVertical < VerticalLaunchProperties.ticksVertical && verticalLaunchRotationCurve != null)
-			{
-				rotation = verticalLaunchRotationCurve.Evaluate(TimeInLaunchVTOL);
-			}
-
-			adjustedDrawPos.y = layer;
-			vehicle.DrawAt(adjustedDrawPos, rotation, flip);
-			return adjustedDrawPos;
+			base.TickMotes();
 		}
 
 		protected override void TickLanding()
 		{
-			if (ticksPassed > 0)
+			if (ticksPassed < landingProperties.maxTicks)
 			{
 				base.TickLanding();
 			}
 			else
 			{
-				ticksPassedVertical--;
+				ticksPassedVertical++;
+				TickMotes();
 			}
 		}
 
 		protected override void TickTakeoff()
 		{
-			if (ticksPassedVertical >= VerticalLaunchProperties.ticksVertical)
+			if (ticksPassedVertical >= LaunchProperties_VTOL.maxTicksVertical)
 			{
 				base.TickTakeoff();
 			}
 			else
 			{
 				ticksPassedVertical++;
-				if (!motes.NullOrEmpty())
-				{
-					Rand.PushState();
-					foreach (MoteInfo mote in motes)
-					{
-						float randSmokeX = drawPos.x + Rand.Range(-0.1f, 0.1f);
-						float smokeZOffset = vehicle.VehicleDef.Size.z / 2;
-						Vector3 vector = new Vector3(randSmokeX, drawPos.y, drawPos.z - smokeZOffset);
-						ThrowMoteLong(mote.moteDef, vector, currentMap, mote.size.RandomInRange, mote.angle.RandomInRange, mote.speed.RandomInRange);
-					}
-					Rand.PopState();
-				}
+				TickMotes();
 			}
 		}
 
 		protected override void PreAnimationSetup()
 		{
 			base.PreAnimationSetup();
-			ticksPassedVertical = landing ? VerticalLandingProperties.ticksVertical : 0;
-		}
-
-		public override void ResolveProperties(LaunchProtocol reference)
-		{
-			base.ResolveProperties(reference);
-			VTOLTakeoff vtolReference = reference as VTOLTakeoff;
-			verticalLaunchCurve = vtolReference.verticalLaunchCurve;
-			verticalLandingCurve = vtolReference.verticalLandingCurve;
-			verticalLaunchRotationCurve = vtolReference.verticalLaunchRotationCurve;
-			verticalLandingRotationCurve = vtolReference.verticalLandingRotationCurve;
+			ticksPassedVertical = 0;
+			effectsToThrowVertical = 0;
 		}
 
 		public override void ExposeData()
 		{
 			base.ExposeData();
-			Scribe_Values.Look(ref ticksPassedVertical, "ticksPassedVertical");
+			Scribe_Values.Look(ref ticksPassedVertical, nameof(ticksPassedVertical), 0);
+			Scribe_Values.Look(ref effectsToThrowVertical, nameof(effectsToThrowVertical), 0);
 		}
 	}
 }

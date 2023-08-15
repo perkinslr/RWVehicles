@@ -5,7 +5,6 @@ using SmashTools;
 
 namespace Vehicles
 {
-	//REDO - CACHE LAUNCH PROTOCOL
 	public class VehicleSkyfaller_Arriving : VehicleSkyfaller
 	{
 		public const int NotificationSquishInterval = 50;
@@ -19,34 +18,33 @@ namespace Vehicles
 
 		public override void DrawAt(Vector3 drawLoc, bool flip = false)
 		{
-			skyfallerLoc = vehicle.CompVehicleLauncher.launchProtocol.AnimateLanding(drawLoc.y, flip);
-			vehicle.CompVehicleLauncher.launchProtocol.DrawAdditionalLandingTextures(drawLoc.y);
+			(launchProtocolDrawPos, _) = vehicle.CompVehicleLauncher.launchProtocol.Draw(RootPos, 0);
 			DrawDropSpotShadow();
 		}
 
 		public override void Tick()
 		{
 			base.Tick();
-			if (vehicle.CompVehicleLauncher.launchProtocol.FinishedLanding(this))
+			if (vehicle.CompVehicleLauncher.launchProtocol.FinishedAnimation(this))
 			{
 				delayLandingTicks--;
 				if (delayLandingTicks <= 0 && Position.InBounds(Map))
 				{
-					Position = skyfallerLoc.ToIntVec3();
 					FinalizeLanding();
 				}
 			}
-			if (Find.TickManager.TicksGame % NotificationSquishInterval == 0 && Map != null && vehicle.VehicleDef.HasComp(typeof(CompProperties_VehicleTracks)))
+			if (Find.TickManager.TicksGame % NotificationSquishInterval == 0 && Map != null && vehicle.VehicleDef.HasComp(typeof(CompProperties_VehicleDamager)))
 			{
 				foreach (IntVec3 cell in vehicle.PawnOccupiedCells(Position, Rotation))
 				{
-					GenVehicleTracks.NotifyNearbyPawnsOfDangerousPosition(Map, cell);
+					GenVehicleDamager.NotifyNearbyPawnsOfDangerousPosition(Map, cell);
 				}
 			}
 		}
 
 		protected virtual void FinalizeLanding()
 		{
+			vehicle.CompVehicleLauncher.launchProtocol.Release();
 			vehicle.CompVehicleLauncher.inFlight = false;
 			if (VehicleReservationManager.AnyVehicleInhabitingCells(vehicle.PawnOccupiedCells(Position, Rotation), Map))
 			{
@@ -68,9 +66,9 @@ namespace Vehicles
 			base.SpawnSetup(map, respawningAfterLoad);
 			if (!respawningAfterLoad)
 			{
-				vehicle.CompVehicleLauncher.launchProtocol.SetPositionArriving(new Vector3(DrawPos.x, DrawPos.y + 1, DrawPos.z), Rotation, map);
-				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(true);
-				delayLandingTicks = vehicle.CompVehicleLauncher.launchProtocol.landingProperties?.delayByTicks ?? 0;
+				vehicle.CompVehicleLauncher.launchProtocol.Prepare(map, Position, Rotation);
+				vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(LaunchProtocol.LaunchType.Landing);
+				delayLandingTicks = vehicle.CompVehicleLauncher.launchProtocol.CurAnimationProperties.delayByTicks;
 			}
 		}
 	}

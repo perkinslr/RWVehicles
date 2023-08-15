@@ -66,38 +66,8 @@ namespace Vehicles
 				lastStep = "Initializing components";
 				PawnComponentsUtility.CreateInitialComponents(result);
 
-				result.ActiveSustainers = new List<Sustainer>();
-
-				lastStep = "Adding OneShot Events";
-				if (!request.VehicleDef.properties.soundOneShotsOnEvent.NullOrEmpty())
-				{
-					foreach ((VehicleEventDef eventDef, SoundDef soundDef) in request.VehicleDef.properties.soundOneShotsOnEvent)
-					{
-						result.AddEvent(eventDef, () => soundDef.PlayOneShot(result));
-					}
-				}
-
-				lastStep = "Adding Sustainer Events";
-				if (!request.VehicleDef.properties.soundSustainersOnEvent.NullOrEmpty())
-				{
-					foreach ((Pair<VehicleEventDef, VehicleEventDef> eventStartStop, SoundDef soundDef) in request.VehicleDef.properties.soundSustainersOnEvent)
-					{
-						result.AddEvent(eventStartStop.First, delegate ()
-						{
-							SoundInfo soundInfo = SoundInfo.InMap(result, MaintenanceType.PerTick);
-							Sustainer sustainer = soundDef.TrySpawnSustainer(result);
-							result.ActiveSustainers.Add(sustainer);
-						});
-						result.AddEvent(eventStartStop.Second, delegate ()
-						{
-							Sustainer sustainer = result.ActiveSustainers.FirstOrDefault(sustainer => sustainer.def == soundDef);
-							if (sustainer != null)
-							{
-								sustainer.End();
-							}
-						});
-					}
-				}
+				lastStep = "Setting up sound events";
+				result.sustainers = new VehicleSustainers(result);
 
 				lastStep = "Setting faction and kindDef";
 				result.kindDef = request.VehicleDef.kindDef;
@@ -121,7 +91,7 @@ namespace Vehicles
 				lastStep = "Component Post Generation Setup";
 				foreach (VehicleComp comp in result.AllComps.Where(c => c is VehicleComp))
 				{
-					comp.PostGenerationSetup();
+					comp.PostGeneration();
 				}
 
 				//REDO - Allow other modders to add setup for non clean-slate items
@@ -164,7 +134,7 @@ namespace Vehicles
 
 			if (autoFill)
 			{
-				foreach(VehicleHandler handler in vehicle.handlers.Where(h => h.role.handlingTypes.NotNullAndAny()))
+				foreach (VehicleHandler handler in vehicle.handlers.Where(h => h.role.handlingTypes > HandlingTypeFlags.None))
 				{
 					Pawn pawn = PawnGenerator.GeneratePawn(new PawnGenerationRequest(PawnKindDefOf.Colonist, faction ));
 					pawn.SetFactionDirect(faction);
@@ -177,7 +147,7 @@ namespace Vehicles
 
 		public static IEnumerable<PawnKindDef> GetAppropriateVehicles(Faction faction, float points, bool combatFocused)
 		{
-			List<PawnKindDef> vehicles = DefDatabase<PawnKindDef>.AllDefs.Where(p => p.race.thingClass.SameOrSubclass(typeof(VehiclePawn))).ToList();
+			List<PawnKindDef> vehicles = DefDatabase<PawnKindDef>.AllDefsListForReading.Where(p => p.race.thingClass.SameOrSubclass(typeof(VehiclePawn))).ToList();
 			foreach (PawnKindDef vehicleKind in vehicles)
 			{
 				bool restrictToFactions = (vehicleKind.race as VehicleDef).properties.restrictToFactions.NullOrEmpty() || (vehicleKind.race as VehicleDef).properties.restrictToFactions.Contains(faction.def);
@@ -239,7 +209,8 @@ namespace Vehicles
 							float reloadsAvailable = (float)(startingWeight * Math.Pow(Math.E, -cannon.turretDef.magazineCapacity / exponentialDecay) + minReloads);
 							Thing ammo = ThingMaker.MakeThing(ammoType);
 							ammo.stackCount = Mathf.RoundToInt(cannon.turretDef.magazineCapacity * reloadsAvailable);
-							vehicle.inventory.innerContainer.TryAdd(ammo, true);
+							//vehicle.inventory.innerContainer.TryAdd(ammo, true);
+							vehicle.AddOrTransfer(ammo);
 						}
 						cannon.AutoReloadCannon();
 					}

@@ -54,7 +54,7 @@ namespace Vehicles
 		{
 			get
 			{
-				return Moving && !Paused && !caravan.CantMove;
+				return Moving && !Paused && !caravan.CantMove && !caravan.OutOfFuel;
 			}
 		}
 
@@ -95,22 +95,6 @@ namespace Vehicles
 					paused = true;
 				}
 				caravan.Notify_DestinationOrPauseStatusChanged();
-			}
-		}
-
-		public void ExposeData()
-		{
-			Scribe_Values.Look(ref moving, "moving", true, false);
-			Scribe_Values.Look(ref paused, "paused", false, false);
-			Scribe_Values.Look(ref nextTile, "nextTile", 0, false);
-			Scribe_Values.Look(ref previousTileForDrawingIfInDoubt, "previousTileForDrawingIfInDoubt", 0, false);
-			Scribe_Values.Look(ref nextTileCostLeft, "nextTileCostLeft", 0f, false);
-			Scribe_Values.Look(ref nextTileCostTotal, "nextTileCostTotal", 0f, false);
-			Scribe_Values.Look(ref destTile, "destTile", 0, false);
-			Scribe_Deep.Look(ref arrivalAction, "arrivalAction", Array.Empty<object>());
-			if (Scribe.mode == LoadSaveMode.PostLoadInit && Current.ProgramState != ProgramState.Entry && moving && !StartPath(destTile, arrivalAction, true, false))
-			{
-				StopDead();
 			}
 		}
 
@@ -190,7 +174,7 @@ namespace Vehicles
 				Messages.Message("MessageCaravanArrivalActionNoLongerValid".Translate(caravan.Name).CapitalizeFirst() + ((failMessage != null) ? (" " + failMessage) : ""), caravan, MessageTypeDefOf.NegativeEvent, true);
 				StopDead();
 			}
-			if (caravan.CantMove || paused)
+			if (caravan.CantMove || caravan.OutOfFuel || paused)
 			{
 				return;
 			}
@@ -222,27 +206,14 @@ namespace Vehicles
 
 		private bool TryRecoverFromUnwalkablePosition()
 		{
-			if (GenWorldClosest.TryFindClosestTile(caravan.Tile, (int t) => IsPassable(t) && WorldVehicleReachability.Instance.CanReach(caravan, t), out int num, 2147483647, true))
+			if (GenWorldClosest.TryFindClosestTile(caravan.Tile, (int t) => IsPassable(t) && WorldVehicleReachability.Instance.CanReach(caravan, t), out int tile, 2147483647, true))
 			{
-				Log.Warning(string.Concat(new object[]
-				{
-					caravan,
-					" on unwalkable tile ",
-					caravan.Tile,
-					". Teleporting to ",
-					num
-				}));
-				caravan.Tile = num;
+				Log.Warning($"{caravan} on impassable tile: {caravan.Tile}. Teleporting to {tile}");
+				caravan.Tile = tile;
 				caravan.Notify_VehicleTeleported();
 				return true;
 			}
-			Log.Error(string.Concat(new object[]
-			{
-				caravan,
-				" on unwalkable tile ",
-				caravan.Tile,
-				". Could not find walkable position nearby. Removed."
-			}));
+			Log.Error($"{caravan} on impassable tile: {caravan.Tile}. Could not find moveable position nearby. Destroying caravan.");
 			caravan.Destroy();
 			return false;
 		}
@@ -313,13 +284,7 @@ namespace Vehicles
 			previousTileForDrawingIfInDoubt = -1;
 			if (!IsPassable(nextTile))
 			{
-				Log.Error(string.Concat(new object[]
-				{
-					caravan,
-					" entering ",
-					nextTile,
-					" which is unwalkable."
-				}));
+				Log.Error($"{caravan} entering {nextTile} which is impassable");
 			}
 			int num = CostToMove(caravan.Tile, nextTile);
 			nextTileCostTotal = num;
@@ -328,69 +293,51 @@ namespace Vehicles
 
 		private int CostToMove(int start, int end)
 		{
-			return CostToMove(caravan, start, end, null);
+			return CostToMove(caravan, start, end);
 		}
 
 		public static int CostToMove(VehicleCaravan caravan, int start, int end, int? ticksAbs = null)
 		{
-			return CostToMove(caravan, start, end, ticksAbs, null, null);
+			return CostToMove(caravan.UniqueVehicleDefsInCaravan().ToList(), caravan.TicksPerMove, start, end, ticksAbs);
 		}
 
-		public static int CostToMove(VehicleCaravan caravan, int start, int end, int? ticksAbs = null, StringBuilder explanation = null, string caravanTicksPerMoveExplanation = null)
+		public static int CostToMove(List<VehicleDef> vehicleDefs, int ticksPerMove, int start, int end, int? ticksAbs = null, StringBuilder explanation = null, string caravanTicksPerMoveExplanation = null)
 		{
-			int caravanTicksPerMove = caravan.TicksPerMove;
 			if (start == end)
 			{
 				return 0;
 			}
-			if (explanation != null)
-			{
-				explanation.Append(caravanTicksPerMoveExplanation);
-				explanation.AppendLine();
-			}
+			explanation?.AppendLine(caravanTicksPerMoveExplanation);
 			StringBuilder stringBuilder = (explanation != null) ? new StringBuilder() : null;
-			float num = float.MaxValue;
+			float cost = float.MaxValue;
 
-			foreach(VehicleDef vehicle in caravan.UniqueVehicleDefsInCaravan().ToList())
+			foreach (VehicleDef vehicle in vehicleDefs)
 			{
-				float numTmp = WorldVehiclePathGrid.CalculatedMovementDifficultyAt(end, vehicle, ticksAbs, stringBuilder);
-				if(numTmp < num)
+				float newCost = WorldVehiclePathGrid.CalculatedMovementDifficultyAt(end, vehicle, ticksAbs, stringBuilder);
+				if (newCost < cost)
 				{
-					num = numTmp;
+					cost = newCost;
 				}
 			}
 			
-			float roadMovementDifficultyMultiplier = GetRoadMovementDifficultyMultiplier(caravan, start, end, stringBuilder);
+			float roadMovementDifficultyMultiplier = GetRoadMovementDifficultyMultiplier(vehicleDefs, start, end, stringBuilder);
 			if (explanation != null)
 			{
 				explanation.AppendLine();
-				explanation.Append("TileMovementDifficulty".Translate() + ":");
-				explanation.AppendLine();
-				explanation.Append(stringBuilder.ToString().Indented("  "));
-				explanation.AppendLine();
-				explanation.Append("  = " + (num * roadMovementDifficultyMultiplier).ToString("0.#"));
+				explanation.AppendLine("TileMovementDifficulty".Translate() + ":");
+				explanation.AppendLine(stringBuilder.ToString().Indented("  "));
+				explanation.AppendLine($"  = {cost * roadMovementDifficultyMultiplier:0.#}");
 			}
-			int num2 = (int)(caravanTicksPerMove * num * roadMovementDifficultyMultiplier);
-			num2 = Mathf.Clamp(num2, 1, MaxMoveTicks);
+			int finalCost = (int)(ticksPerMove * cost * roadMovementDifficultyMultiplier);
+			finalCost = Mathf.Clamp(finalCost, 1, MaxMoveTicks);
 			if (explanation != null)
 			{
 				explanation.AppendLine();
-				explanation.AppendLine();
-				explanation.Append("FinalCaravanMovementSpeed".Translate() + ":");
-				int num3 = Mathf.CeilToInt(num2 / 1f);
-				explanation.AppendLine();
-				explanation.Append(string.Concat(new string[]
-				{
-					"  ",
-					(60000f / caravanTicksPerMove).ToString("0.#"),
-					" / ",
-					(num * roadMovementDifficultyMultiplier).ToString("0.#"),
-					" = ",
-					(60000f / num3).ToString("0.#"),
-					" "
-				}) + "TilesPerDay".Translate());
+				explanation.AppendLine("FinalCaravanMovementSpeed".Translate() + ":");
+				int num3 = Mathf.CeilToInt(finalCost / 1f);
+				explanation.Append($"  {GenDate.TicksPerDay / ticksPerMove:0.#} / {cost * roadMovementDifficultyMultiplier:0.#} = {GenDate.TicksPerDay / num3:0.#} {"TilesPerDay".Translate()}");
 			}
-			return num2;
+			return finalCost;
 		}
 
 		public static float GetRoadMovementDifficultyMultiplier(VehicleCaravan caravan, int fromTile, int toTile, StringBuilder explanation = null)
@@ -404,7 +351,7 @@ namespace Vehicles
 			List<Tile.RoadLink> roads = Find.WorldGrid.tiles[fromTile].Roads;
 			if (roads == null)
 			{
-				return 1f;
+				return Mathf.Clamp(vehicleDefs.Max(vehicleDef => vehicleDef.properties.offRoadMultiplier), 0.1f, 100);
 			}
 			if (toTile == -1)
 			{
@@ -414,27 +361,35 @@ namespace Vehicles
 			{
 				if (roads[i].neighbor == toTile)
 				{
-					float movementCostMultiplier = roads[i].road.movementCostMultiplier;
-					foreach (VehicleDef vehicleDef in vehicleDefs)
-					{
-						//Take slowest multiplier (caravan is limited by slowest vehicle)
-						if (vehicleDef.properties.customRoadCosts.TryGetValue(roads[i].road, out float value) && value > movementCostMultiplier)
-						{
-							movementCostMultiplier = value;
-						}
-					}
+					float roadMultiplier = GetRoadMovementDifficultyMultiplier(vehicleDefs, roads[i].road);
+					
 					if (explanation != null)
 					{
 						if (explanation.Length > 0)
 						{
 							explanation.AppendLine();
 						}
-						explanation.Append(roads[i].road.LabelCap + ": " + movementCostMultiplier.ToStringPercent());
+						explanation.Append($"{roads[i].road.LabelCap}: {roadMultiplier.ToStringPercent()}");
 					}
-					return movementCostMultiplier;
+					return roadMultiplier;
 				}
 			}
 			return 1f;
+		}
+
+		public static float GetRoadMovementDifficultyMultiplier(List<VehicleDef> vehicleDefs, RoadDef roadDef)
+		{
+			float roadMultiplier = roadDef.movementCostMultiplier;
+			bool customRoadCosts = false;
+			foreach (VehicleDef vehicleDef in vehicleDefs)
+			{
+				if (vehicleDef.properties.customRoadCosts.TryGetValue(roadDef, out float movementCostMultiplier) && (!customRoadCosts || movementCostMultiplier < roadMultiplier))
+				{
+					customRoadCosts = true;
+					roadMultiplier = movementCostMultiplier;
+				}
+			}
+			return roadMultiplier;
 		}
 
 		public static bool IsValidFinalPushDestination(int tile)
@@ -521,17 +476,31 @@ namespace Vehicles
 			{
 				return true;
 			}
-			int num = 0;
-			while (num < MaxCheckAheadNodes && num < curPath.NodesLeftCount)
+			for (int i = 0; i < MaxCheckAheadNodes && i < curPath.NodesLeftCount; i++)
 			{
-				int tileID = curPath.Peek(num);
+				int tileID = curPath.Peek(i);
 				if (!IsPassable(tileID))
 				{
 					return true;
 				}
-				num++;
 			}
 			return false;
+		}
+
+		public void ExposeData()
+		{
+			Scribe_Values.Look(ref moving, "moving", true, false);
+			Scribe_Values.Look(ref paused, "paused", false, false);
+			Scribe_Values.Look(ref nextTile, "nextTile", 0, false);
+			Scribe_Values.Look(ref previousTileForDrawingIfInDoubt, "previousTileForDrawingIfInDoubt", 0, false);
+			Scribe_Values.Look(ref nextTileCostLeft, "nextTileCostLeft", 0f, false);
+			Scribe_Values.Look(ref nextTileCostTotal, "nextTileCostTotal", 0f, false);
+			Scribe_Values.Look(ref destTile, "destTile", 0, false);
+			Scribe_Deep.Look(ref arrivalAction, "arrivalAction", Array.Empty<object>());
+			if (Scribe.mode == LoadSaveMode.PostLoadInit && Current.ProgramState != ProgramState.Entry && moving && !StartPath(destTile, arrivalAction, true, false))
+			{
+				StopDead();
+			}
 		}
 	}
 }

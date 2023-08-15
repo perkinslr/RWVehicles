@@ -4,40 +4,29 @@ using SmashTools;
 
 namespace Vehicles
 {
-	public class VehicleRole : IExposable
+	public class VehicleRole
 	{
 		public string key;
-		public string label = "Missing Label";
-		public List<HandlingTypeFlags> handlingTypes;
+		public string label = "[MissingLabel]";
+
+		//Operating
+		public HandlingTypeFlags handlingTypes = HandlingTypeFlags.None;
 		public int slots;
 		public int slotsToOperate;
 		public List<string> turretIds;
+		//Damaging
 		public ComponentHitbox hitbox = new ComponentHitbox();
+		public bool exposed = false;
+		public float chanceToHit = 0.3f;
+		//Rendering
 		public PawnOverlayRenderer pawnRenderer;
 
 		public VehicleRole()
 		{
-
 		}
 
-		public VehicleRole(VehicleHandler group)
+		public VehicleRole(VehicleHandler group) : this(group.role)
 		{
-			if (string.IsNullOrEmpty(group.role.key))
-			{
-				Log.Error($"Missing Key on VehicleRole {group.role.label}");
-			}
-			key = group.role.key;
-			label = group.role.label;
-			handlingTypes = new List<HandlingTypeFlags>();
-			if (group.role.handlingTypes != null)
-			{
-				handlingTypes.AddRange(group.role.handlingTypes);
-			}
-			slots = group.role.slots;
-			slotsToOperate = group.role.slotsToOperate;
-			turretIds = new List<string>();
-			turretIds.AddRange(group.role.turretIds);
-			pawnRenderer = group.role.pawnRenderer;
 		}
 
 		public VehicleRole(VehicleRole reference)
@@ -48,28 +37,17 @@ namespace Vehicles
 			}
 			key = reference.key;
 			label = reference.label;
-			handlingTypes = new List<HandlingTypeFlags>();
-			if (reference.handlingTypes != null)
-			{
-				handlingTypes.AddRange(reference.handlingTypes);
-			}
+			handlingTypes = reference.handlingTypes;
 			slots = reference.slots;
 			slotsToOperate = reference.slotsToOperate;
-			turretIds = reference.turretIds;
+			if (!reference.turretIds.NullOrEmpty())
+			{
+				turretIds = new List<string>(reference.turretIds);
+			}
 			hitbox = reference.hitbox;
 			pawnRenderer = reference.pawnRenderer;
 		}
 
-		public bool RequiredForCaravan => slotsToOperate > 0 && handlingTypes.NotNullAndAny(h => h == HandlingTypeFlags.Movement);
-
-		public void ExposeData()
-		{
-			Scribe_Values.Look(ref key, "key");
-			Scribe_Values.Look(ref label, "label", "");
-			Scribe_Collections.Look(ref handlingTypes, "handlingTypes");
-			Scribe_Values.Look(ref slots, "slots", 1);
-			Scribe_Values.Look(ref slotsToOperate, "slotsToOperate", 1);
-			Scribe_Collections.Look(ref turretIds, "turretIds");
-		}
+		public bool RequiredForCaravan => slotsToOperate > 0 && handlingTypes.HasFlag(HandlingTypeFlags.Movement);
 	}
 }

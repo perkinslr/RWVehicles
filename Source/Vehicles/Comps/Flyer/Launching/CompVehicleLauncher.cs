@@ -4,12 +4,14 @@ using System.Globalization;
 using System.Linq;
 using UnityEngine;
 using Verse;
+using RimWorld;
 using RimWorld.Planet;
 using SmashTools;
 
 namespace Vehicles
 {
 	[StaticConstructorOnStartup]
+	[HeaderTitle(Label = nameof(CompVehicleLauncher))]
 	public class CompVehicleLauncher : VehicleComp
 	{
 		public static SimpleCurve ClimbRateCurve = new SimpleCurve()
@@ -26,10 +28,11 @@ namespace Vehicles
 			new CurvePoint(1, 1)
 		};
 
+		[GraphEditable]
 		public LaunchProtocol launchProtocol;
 
 		public float fuelEfficiencyWorldModifier;
-		public float flySpeedModifier;
+		public float flightSpeedModifier;
 		public float rateOfClimbModifier;
 		public int maxAltitudeModifier;
 		public int landingAltitudeModifier;
@@ -38,12 +41,14 @@ namespace Vehicles
 
 		public bool inFlight = false;
 
+		public virtual bool AnyFlightControl { get; private set; }
+
 		public bool Roofed => Vehicle.Position.Roofed(Vehicle.Map);
 		public bool AnyLeftToLoad => Vehicle.cargoToLoad.NotNullAndAny();
-		public VehiclePawn Vehicle => parent as VehiclePawn;
+
 		public CompProperties_VehicleLauncher Props => props as CompProperties_VehicleLauncher;
 
-		public float FlySpeed => flySpeedModifier + Vehicle.GetStatValue(VehicleStatDefOf.FlightSpeed);
+		public float FlightSpeed => flightSpeedModifier + Vehicle.GetStatValue(VehicleStatDefOf.FlightSpeed);
 		public float FuelConsumptionWorldMultiplier => fuelEfficiencyWorldModifier + SettingsCache.TryGetValue(Vehicle.VehicleDef, typeof(CompProperties_VehicleLauncher), nameof(Props.fuelConsumptionWorldMultiplier), Props.fuelConsumptionWorldMultiplier);
 		public int FixedMaxDistance => SettingsCache.TryGetValue(Vehicle.VehicleDef, typeof(CompProperties_VehicleLauncher), nameof(Props.fixedLaunchDistanceMax), Props.fixedLaunchDistanceMax);
 		public bool SpaceFlight => SettingsCache.TryGetValue(Vehicle.VehicleDef, typeof(CompProperties_VehicleLauncher), nameof(Props.spaceFlight), Props.spaceFlight);
@@ -55,13 +60,15 @@ namespace Vehicles
 
 		public virtual bool ControlledDescent => ClimbRateStat >= 0;
 
-		public virtual bool AnyFlightControl { get; private set; }
+		public override bool TickByRequest => true;
+
+		public override IEnumerable<AnimationDriver> Animations => launchProtocol.Animations;
 
 		public virtual float ClimbRateStat
 		{
 			get
 			{
-				bool flight = launchProtocol.CanLaunchNow && FlySpeed > 0 && (!Vehicle.CompFueledTravel?.EmptyTank ?? true);
+				bool flight = launchProtocol.CanLaunchNow && FlightSpeed > 0 && (!Vehicle.CompFueledTravel?.EmptyTank ?? true);
 				if (!flight)
 				{
 					return ClimbRateCurve.Evaluate(0);
@@ -104,6 +111,7 @@ namespace Vehicles
 		public void SetTimedDeployment()
 		{
 			timer.Reset();
+			StartTicking();
 		}
 
 		public ShuttleLaunchStatus GetShuttleStatus(GlobalTargetInfo mouseTarget, Vector3 origin)
@@ -139,40 +147,68 @@ namespace Vehicles
 				yield break;
 			}
 			var command = launchProtocol.LaunchCommand;
-			if (!launchProtocol.CanLaunchNow)
+			if (!CanLaunchWithCargoCapacity(out string disableReason))
 			{
-				command.Disable(launchProtocol.FailLaunchMessage);
-			}
-			if (FlySpeed <= 0)
-			{
-				command.Disable("Vehicles_NoFlySpeed".Translate());
-			}
-			if (Roofed)
-			{
-				command.Disable("CommandLaunchGroupFailUnderRoof".Translate());
-			}
-			if (Vehicle.vPather.Moving)
-			{
-				command.Disable("Vehicles_CannotLaunchWhileMoving".Translate(Vehicle.LabelShort));
-			}
-			if (SettingsCache.TryGetValue(Vehicle.VehicleDef, typeof(VehicleDef), "vehicleMovementPermissions", Vehicle.VehicleDef.vehicleMovementPermissions) > VehiclePermissions.NotAllowed && (!Vehicle.CanMoveFinal || Vehicle.Angle != 0))
-			{
-				command.Disable("Vehicles_CannotMove".Translate(Vehicle.LabelShort));
-			}
-			if (!VehicleMod.settings.debug.debugDraftAnyShip && !Vehicle.PawnCountToOperateFullfilled)
-			{
-				command.Disable("Vehicles_NotEnoughToOperate".Translate());
-			}
-			if (Vehicle.CompFueledTravel != null && Vehicle.CompFueledTravel.EmptyTank)
-			{
-				command.Disable("VehicleLaunchOutOfFuel".Translate());
+				command.Disable(disableReason);
 			}
 			yield return command;
 		}
 
+		public bool CanLaunchWithCargoCapacity(out string disableReason)
+		{
+			disableReason = null;
+			if (Vehicle.Spawned)
+			{
+				if (Vehicle.vPather.Moving)
+				{
+					disableReason = "VF_CannotLaunchWhileMoving".Translate(Vehicle.LabelShort);
+				}
+				else if (Roofed)
+				{
+					disableReason = "CommandLaunchGroupFailUnderRoof".Translate();
+				}
+			}
+
+			if (SettingsCache.TryGetValue(Vehicle.VehicleDef, typeof(VehicleDef), nameof(VehicleDef.vehicleMovementPermissions), Vehicle.VehicleDef.vehicleMovementPermissions) > VehiclePermissions.NotAllowed)
+			{
+				if (!Vehicle.CanMoveFinal || Vehicle.Angle != 0)
+				{
+					disableReason = "VF_CannotLaunchImmobile".Translate(Vehicle.LabelShort);
+				}
+			}
+			else
+			{
+				float capacity = Vehicle.GetStatValue(VehicleStatDefOf.CargoCapacity);
+				if (MassUtility.InventoryMass(Vehicle) > capacity)
+				{
+					disableReason = "VF_CannotLaunchOverEncumbered".Translate(Vehicle.LabelShort);
+				}
+			}
+
+			if (!VehicleMod.settings.debug.debugDraftAnyVehicle && !Vehicle.CanMoveWithOperators)
+			{
+				disableReason = "VF_NotEnoughToOperate".Translate();
+			}
+			else if (Vehicle.CompFueledTravel != null && Vehicle.CompFueledTravel.EmptyTank)
+			{
+				disableReason = "VF_LaunchOutOfFuel".Translate();
+			}
+			else if(FlightSpeed <= 0)
+			{
+				disableReason = "VF_NoFlightSpeed".Translate();
+			}
+
+			if (!launchProtocol.CanLaunchNow)
+			{
+				disableReason = launchProtocol.FailLaunchMessage;
+			}
+
+			return disableReason.NullOrEmpty();
+		}
+
 		public override string CompInspectStringExtra()
 		{
-			if (Vehicle.PawnCountToOperateFullfilled && AnyLeftToLoad)
+			if (Vehicle.CanMoveWithOperators && AnyLeftToLoad)
 			{
 				return "NotReadyForLaunch".Translate() + ": " + "TransportPodInGroupHasSomethingLeftToLoad".Translate().CapitalizeFirst() + ".";
 			}
@@ -192,20 +228,21 @@ namespace Vehicles
 				flightPath.Add(new FlightNode(destinationTile, null));
 			}
 			Vehicle.CompVehicleLauncher.inFlight = true;
+			Vehicle.CompVehicleLauncher.launchProtocol.OrderProtocol(LaunchProtocol.LaunchType.Takeoff);
 			VehicleSkyfaller_Leaving vehicleLeaving = (VehicleSkyfaller_Leaving)VehicleSkyfallerMaker.MakeSkyfaller(Props.skyfallerLeaving, Vehicle);
 			vehicleLeaving.arrivalAction = arrivalAction;
 			vehicleLeaving.vehicle = Vehicle;
 			vehicleLeaving.flightPath = new List<FlightNode>(flightPath);
 			vehicleLeaving.orderRecon = recon;
-			GenSpawn.Spawn(vehicleLeaving, Vehicle.Position, Vehicle.Map, Vehicle.CompVehicleLauncher.launchProtocol.landingProperties.forcedRotation ?? Vehicle.Rotation, WipeMode.Vanish);
+			GenSpawn.Spawn(vehicleLeaving, Vehicle.Position, Vehicle.Map, Vehicle.CompVehicleLauncher.launchProtocol.CurAnimationProperties.forcedRotation ?? Vehicle.Rotation, WipeMode.Vanish);
 
 			if (Vehicle.Spawned)
 			{
 				Vehicle.DeSpawn(DestroyMode.Vanish);
 			}
 			Find.WorldPawns.PassToWorld(Vehicle);
-
 			CameraJumper.TryHideWorld();
+			Vehicle.EventRegistry[VehicleEventDefOf.AerialVehicleLaunch].ExecuteEvents();
 		}
 
 		public float FuelNeededToLaunchAtDist(Vector3 origin, int destination)
@@ -216,9 +253,9 @@ namespace Vehicles
 
 		public float FuelNeededToLaunchAtDist(float tileDistance)
 		{
-			float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / tileDistance) * FlySpeed;
+			float speedPctPerTick = (AerialVehicleInFlight.PctPerTick / tileDistance) * FlightSpeed;
 			float amount = Vehicle.CompFueledTravel.ConsumptionRatePerTick * FuelConsumptionWorldMultiplier;
-			return amount * (1f / speedPctPerTick);
+			return amount / speedPctPerTick;
 		}
 
 		public virtual void InitializeLaunchProtocols(bool regenerateProtocols)
@@ -237,8 +274,11 @@ namespace Vehicles
 
 		public override void CompTick()
 		{
-			base.CompTick();
 			timer.Tick(Vehicle);
+			if (timer.Expired)
+			{
+				StopTicking();
+			}
 		}
 
 		public override void PostSpawnSetup(bool respawningAfterLoad)
@@ -255,15 +295,15 @@ namespace Vehicles
 		public override void PostExposeData()
 		{
 			base.PostExposeData();
-			Scribe_Deep.Look(ref launchProtocol, "launchProtocol");
-			Scribe_Values.Look(ref flySpeedModifier, "flySpeedModifier");
-			Scribe_Values.Look(ref fuelEfficiencyWorldModifier, "fuelEfficiencyWorldModifier");
-			Scribe_Values.Look(ref rateOfClimbModifier, "rateOfClimbModifier");
-			Scribe_Values.Look(ref maxAltitudeModifier, "maxAltitudeModifier");
-			Scribe_Values.Look(ref landingAltitudeModifier, "landingAltitudeModifier");
+			Scribe_Deep.Look(ref launchProtocol, nameof(launchProtocol));
+			Scribe_Values.Look(ref flightSpeedModifier, nameof(flightSpeedModifier));
+			Scribe_Values.Look(ref fuelEfficiencyWorldModifier, nameof(fuelEfficiencyWorldModifier));
+			Scribe_Values.Look(ref rateOfClimbModifier, nameof(rateOfClimbModifier));
+			Scribe_Values.Look(ref maxAltitudeModifier, nameof(maxAltitudeModifier));
+			Scribe_Values.Look(ref landingAltitudeModifier, nameof(landingAltitudeModifier));
 
-			Scribe_Values.Look(ref inFlight, "inFlight");
-			Scribe_Values.Look(ref timer, "timer");
+			Scribe_Values.Look(ref inFlight, nameof(inFlight));
+			Scribe_Values.Look(ref timer, nameof(timer));
 		}
 
 		public struct DeploymentTimer
@@ -279,12 +319,19 @@ namespace Vehicles
 
 			public static DeploymentTimer Default => new DeploymentTimer(0, false);
 
+			public bool Expired => !enabled || ticksLeft <= 0;
+
 			public void Reset()
 			{
 				ticksLeft = Mathf.RoundToInt(VehicleMod.settings.main.delayDeployOnLanding * 60);
 				enabled = true;
 			}
 
+			/// <summary>
+			/// Tick DeploymentTimer for delayed disembarkation 
+			/// </summary>
+			/// <param name="vehicle"></param>
+			/// <returns></returns>
 			public void Tick(VehiclePawn vehicle)
 			{
 				ticksLeft--;

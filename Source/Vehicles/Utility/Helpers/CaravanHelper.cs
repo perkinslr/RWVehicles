@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using UnityEngine;
 using HarmonyLib;
 using Verse;
@@ -15,7 +16,7 @@ namespace Vehicles
 {
 	public static class CaravanHelper
 	{
-		public static Dictionary<Pawn, (VehiclePawn vehicle, VehicleHandler handler)> assignedSeats = new Dictionary<Pawn, (VehiclePawn vehicle, VehicleHandler handler)>();
+		public static Dictionary<Pawn, AssignedSeat> assignedSeats = new Dictionary<Pawn, AssignedSeat>();
 
 		/// <summary>
 		/// Remove all pawns from <see cref="assignedSeats"/> for this vehicle
@@ -133,11 +134,11 @@ namespace Vehicles
 		/// <param name="dock"></param>
 		public static void ToggleDocking(Caravan caravan, bool dock = false)
 		{
-			if (caravan.HasBoat())
+			if (caravan.HasBoat() && caravan is VehicleCaravan vehicleCaravan)
 			{
 				if (!dock)
 				{
-					BoardAllCaravanPawns(caravan);
+					BoardAllCaravanPawns(vehicleCaravan);
 				}
 				else
 				{
@@ -151,7 +152,7 @@ namespace Vehicles
 		/// Spawn DockedBoat object to store boats on World map
 		/// </summary>
 		/// <param name="caravan"></param>
-		public static void SpawnDockedBoatObject(Caravan caravan)
+		public static void SpawnDockedBoatObject(VehicleCaravan caravan)
 		{
 			if (!caravan.HasBoat())
 			{
@@ -165,15 +166,15 @@ namespace Vehicles
 		/// Directly board all pawns in caravan into Boats in caravan
 		/// </summary>
 		/// <param name="caravan"></param>
-		public static void BoardAllCaravanPawns(Caravan caravan)
+		public static void BoardAllCaravanPawns(VehicleCaravan caravan)
 		{
 			if (!AbleToEmbark(caravan))
 			{
-				if (caravan.pather.Moving)
+				if (caravan.vPather.Moving)
 				{
-					caravan.pather.StopDead();
+					caravan.vPather.StopDead();
 				}
-				Messages.Message("CantMoveDocked".Translate(), MessageTypeDefOf.RejectInput, false);
+				Messages.Message("VF_CantMoveDocked".Translate(), MessageTypeDefOf.RejectInput, false);
 				return;
 			}
 
@@ -251,7 +252,7 @@ namespace Vehicles
 			int seats = 0;
 			int pawnCount = 0;
 			int prereq = 0;
-			bool flag = pawns.NotNullAndAny(p => p.IsBoat()); //Ships or No Ships
+			bool hasBoats = pawns.NotNullAndAny(p => p.IsBoat()); //Ships or No Ships
 
 			foreach (Pawn p in pawns)
 			{
@@ -266,17 +267,17 @@ namespace Vehicles
 				}
 			}
 
-			bool flag2 = flag ? pawnCount > seats : false; //Not Enough Room, must board all pawns
-			bool flag3 = pawnCount < prereq;
-			if (flag2)
+			bool notEnoughSeats = hasBoats ? pawnCount > seats : false; //Not Enough Room, must board all pawns
+			bool prereqNotMet = pawnCount < prereq;
+			if (notEnoughSeats)
 			{
-				Messages.Message("CaravanMustHaveEnoughSpaceOnShip".Translate(), MessageTypeDefOf.RejectInput, false);
+				Messages.Message("VF_CaravanMustHaveEnoughSpaceOnShip".Translate(), MessageTypeDefOf.RejectInput, false);
 			}
-			if (flag3)
+			if (prereqNotMet)
 			{
-				Messages.Message("CaravanMustHaveEnoughPawnsToOperate".Translate(prereq), MessageTypeDefOf.RejectInput, false);
+				Messages.Message("VF_CaravanMustHaveEnoughPawnsToOperate".Translate(prereq), MessageTypeDefOf.RejectInput, false);
 			}
-			return !flag2 && !flag3;
+			return !notEnoughSeats && !prereqNotMet;
 		}
 		
 		/// <summary>
@@ -329,12 +330,11 @@ namespace Vehicles
 			{
 				pawn.ExitMap(false, exitDir);
 			}
-			List<Pawn> pawnsListForReading = caravan.PawnsListForReading;
-			foreach (Pawn pawn in caravan.pawns)
+			foreach (Pawn pawn in caravan.PawnsListForReading)
 			{
 				if (!pawn.IsWorldPawn())
 				{
-					Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
+					Find.WorldPawns.PassToWorld(pawn);
 				}
 			}
 			if (map != null)
@@ -370,6 +370,22 @@ namespace Vehicles
 				Messages.Message(taggedString, caravan, MessageTypeDefOf.TaskCompletion, true);
 			}
 			return caravan;
+		}
+
+		public static bool OpportunistcallyCreatedAerialVehicle(VehiclePawn vehicle, int tile)
+		{
+			bool canExit = Find.World.GetCachedWorldComponent<WorldVehiclePathGrid>().Passable(tile, vehicle.VehicleDef);
+			if (!canExit && vehicle.GetCachedComp<CompVehicleLauncher>() is CompVehicleLauncher)
+			{
+				AerialVehicleInFlight.Create(vehicle, tile);
+				if (vehicle.Spawned)
+				{
+					vehicle.jobs.StopAll();
+					vehicle.DeSpawn(DestroyMode.Vanish);
+				}
+				return true;
+			}
+			return false;
 		}
 
 		/// <summary>
@@ -452,7 +468,7 @@ namespace Vehicles
 					caravan.AddPawn(pawn, addToWorldPawnsIfNotAlready);
 					if (addToWorldPawnsIfNotAlready && !pawn.IsWorldPawn())
 					{
-						Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Decide);
+						Find.WorldPawns.PassToWorld(pawn);
 					}
 				}
 			}
@@ -489,7 +505,7 @@ namespace Vehicles
 				tmpCaravanPawns.Add(new ThingCount(pawn, pawn.stackCount));
 			}
 			num += CollectionsMassCalculator.MassUsage(tmpCaravanPawns, IgnorePawnsInventoryMode.IgnoreIfAssignedToUnload, false, false);
-			float num2 = CollectionsMassCalculator.Capacity(tmpCaravanPawns, null);
+			float num2 = CaravanInfoHelper.Capacity(tmpCaravanPawns, null);
 			tmpCaravanPawns.Clear();
 			return num2 - num;
 		}
@@ -609,7 +625,7 @@ namespace Vehicles
 					TaleRecorder.RecordTale(TaleDefOf.CaravanFormed, author);
 					return;
 				}
-				if (GenHostility.AnyHostileActiveThreatToPlayer_NewTemp(author.Map, false))
+				if (GenHostility.AnyHostileActiveThreatToPlayer(author.Map, false))
 				{
 					TaleRecorder.RecordTale(TaleDefOf.CaravanFled, author);
 				}
@@ -626,14 +642,21 @@ namespace Vehicles
 			{
 				return null;
 			}
-			if (pawn is VehiclePawn vehicle && !vehicle.CanReachVehicleMapEdge())
+			if (pawn is VehiclePawn vehicle)
 			{
-				return null;
+				if (!vehicle.CanReachVehicleMapEdge())
+				{
+					return null;
+				}
 			}
-			if (!(pawn is VehiclePawn) && !pawn.CanReachMapEdge())
+			else
 			{
-				return null;
+				if (!pawn.CanReachMapEdge())
+				{
+					return null;
+				}
 			}
+			
 			List<int> neighbors = new List<int>();
 			int tile = pawn.Map.Tile;
 			Find.WorldGrid.GetTileNeighbors(tile, neighbors);
@@ -644,6 +667,13 @@ namespace Vehicles
 				Caravan caravan = caravans[i];
 				if (neighbors.Contains(caravan.Tile) && caravan.autoJoinable)
 				{
+					if (pawn is VehiclePawn vehicle2 && caravan is VehicleCaravan vehicleCaravan)
+					{
+						if (!vehicleCaravan.ViableForCaravan(vehicle2))
+						{
+							return null;
+						}
+					}
 					if (pawn.HostFaction == null)
 					{
 						if (caravan.Faction == pawn.Faction)
@@ -655,6 +685,43 @@ namespace Vehicles
 					{
 						return caravan;
 					}
+				}
+			}
+			return null;
+		}
+
+		public static AerialVehicleInFlight FindAerialVehicleToJoinForAllowingVehicles(Pawn pawn)
+		{
+			if (pawn.Faction != Faction.OfPlayer && pawn.HostFaction != Faction.OfPlayer)
+			{
+				return null;
+			}
+			if (!pawn.Spawned)
+			{
+				return null;
+			}
+			if (pawn is VehiclePawn)
+			{
+				return null; //Aerial vehicles can't fly together
+			}
+			else if (!pawn.CanReachMapEdge())
+			{
+				return null;
+			}
+			List<AerialVehicleInFlight> aerialVehicles = VehicleWorldObjectsHolder.Instance.AerialVehicles.Where(aerialVehicle => aerialVehicle.Tile == pawn.Map.Tile).ToList();
+			
+			foreach (AerialVehicleInFlight aerialVehicle in aerialVehicles)
+			{
+				if (pawn.HostFaction == null)
+				{
+					if (aerialVehicle.Faction == pawn.Faction)
+					{
+						return aerialVehicle;
+					}
+				}
+				if (aerialVehicle.Faction == pawn.HostFaction)
+				{
+					return aerialVehicle;
 				}
 			}
 			return null;
