@@ -272,7 +272,7 @@ def main(argv=sys.argv):
                 
 
     libraries = [l for l in set(libraries) if not os.path.basename(l) in removed_libraries]
-    args.extend([f'-out:{options.output}', *sources, *[f'-r:{r}' for r in libraries]])
+    args.extend([f'-out:{options.output}', *set(sources), *[f'-r:{r}' for r in libraries]])
     args.extend(rest)
     if options.refout:
         args.extend([f"-refout:{options.refout}"])
