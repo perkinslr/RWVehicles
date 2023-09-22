@@ -153,6 +153,11 @@ namespace Vehicles
 		/// </summary>
 		public static Func<string, Def> LookupAmmosetCE = null;
 
+		/// <summary>
+		/// (projectileDef, ammoDef, ammosetDef, shotLocation, shotRotation, recoilAmount)
+		/// </summary>
+		public static Action<ThingDef, ThingDef, Def, Vector3, float, float> NotifyShotFiredCE = null;
+
 
 	        /// <summary>
 		/// (ammoDef, ammosetDef, spread, ret Tuple<projectileCount, spread>)
@@ -1192,6 +1197,11 @@ namespace Vehicles
 						LaunchProjectileCE(projectile, loadedAmmo, turretData?._ammoSet, new Vector2(launchCell.x, launchCell.z), cannonTarget, vehicle, sa + vce.y, tr + vce.x, shotHeight, speed);
 					}
 					while (--projectileCount > 0);
+
+					if (NotifyShotFiredCE != null)
+					{
+						NotifyShotFiredCE(projectile, loadedAmmo, turretData?._ammoSet, TurretLocation, -TurretRotation, recoil);
+					}
 				}
 				turretDef.shotSound?.PlayOneShot(new TargetInfo(vehicle.Position, vehicle.Map));
 				vehicle.Drawer.rTracker.Notify_TurretRecoil(this, Ext_Math.RotateAngle(TurretRotation, 180));
